@@ -28,6 +28,15 @@ def orthonormal_embedding(input_dim: int, N: int) -> torch.Tensor:
     return q
 
 
+def scaled_embedding(input_dim: int, N: int, variance: float | None) -> torch.Tensor:
+    embedding = orthonormal_embedding(input_dim, N)
+    if variance is None:
+        return embedding
+    if variance < 0:
+        raise ValueError("embedding_weight_variance must be non-negative")
+    return embedding * math.sqrt(N * variance)
+
+
 class ResidualBlock(nn.Module):
     def __init__(self, width: int, activation: str, variance: float, bias: bool) -> None:
         super().__init__()
@@ -49,7 +58,13 @@ class ParityResidualNet(nn.Module):
 
         embedding = nn.Linear(config.input_dim, config.N, bias=False)
         with torch.no_grad():
-            embedding.weight.copy_(orthonormal_embedding(config.input_dim, config.N))
+            embedding.weight.copy_(
+                scaled_embedding(
+                    config.input_dim,
+                    config.N,
+                    config.embedding_weight_variance,
+                )
+            )
         embedding.weight.requires_grad_(False)
         self.embedding = embedding
 

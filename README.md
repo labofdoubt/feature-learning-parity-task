@@ -44,10 +44,12 @@ intervention.
 ## Config Notes
 
 `ModelConfig` controls the network shape: width `N`, depth
-`L`, readout barrier toggle, hidden-layer initialization variance,
-and readout initialization variance.
+`L`, readout barrier toggle, embedding scale, hidden-layer initialization
+variance, and readout initialization variance.
 The initialization variance fields are literal per-entry variances:
-`hidden_weight_variance` initializes hidden weights with
+`embedding_weight_variance` rescales the frozen orthonormal embedding to have
+approximately that per-entry variance; omit it or set it to `null` to keep the
+unscaled QR embedding. `hidden_weight_variance` initializes hidden weights with
 `std = sqrt(hidden_weight_variance)`, and `readout_weight_variance`
 initializes readout weights with `std = sqrt(readout_weight_variance)`.
 

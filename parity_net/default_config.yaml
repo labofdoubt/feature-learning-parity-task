@@ -5,6 +5,7 @@ model:
   L: 4
   activation: silu
   use_readout_barrier: true
+  embedding_weight_variance:
   hidden_weight_variance: 1.0
   readout_weight_variance: 0.0001
   bias: false

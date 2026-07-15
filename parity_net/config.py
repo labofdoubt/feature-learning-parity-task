@@ -15,6 +15,7 @@ class ModelConfig:
     L: int = 4
     activation: Literal["relu", "gelu", "tanh", "silu"] = "silu"
     use_readout_barrier: bool = True
+    embedding_weight_variance: float | None = None
     hidden_weight_variance: float = 1.0
     readout_weight_variance: float = 1e-4
     bias: bool = False
