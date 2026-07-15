@@ -8,6 +8,7 @@ model:
   embedding_weight_variance:
   hidden_weight_variance: 1.0
   readout_weight_variance: 0.0001
+  use_post_activation_linear: false
   bias: false
 training:
   num_steps: 10000

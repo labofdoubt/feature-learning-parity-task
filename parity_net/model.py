@@ -38,16 +38,38 @@ def scaled_embedding(input_dim: int, N: int, variance: float | None) -> torch.Te
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, width: int, activation: str, variance: float, bias: bool) -> None:
+    def __init__(
+        self,
+        width: int,
+        activation: str,
+        variance: float,
+        bias: bool,
+        use_post_activation_linear: bool,
+    ) -> None:
         super().__init__()
         self.linear = nn.Linear(width, width, bias=bias)
         self.activation = activation_from_name(activation)
+        self.post_activation_linear = (
+            nn.Linear(width, width, bias=bias) if use_post_activation_linear else None
+        )
+
         nn.init.normal_(self.linear.weight, mean=0.0, std=math.sqrt(variance))
         if self.linear.bias is not None:
             nn.init.zeros_(self.linear.bias)
+        if self.post_activation_linear is not None:
+            nn.init.normal_(
+                self.post_activation_linear.weight,
+                mean=0.0,
+                std=math.sqrt(variance),
+            )
+            if self.post_activation_linear.bias is not None:
+                nn.init.zeros_(self.post_activation_linear.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.activation(self.linear(x))
+        update = self.activation(self.linear(x))
+        if self.post_activation_linear is not None:
+            update = self.post_activation_linear(update)
+        return x + update
 
 
 class ParityResidualNet(nn.Module):
@@ -75,6 +97,7 @@ class ParityResidualNet(nn.Module):
                     config.activation,
                     config.hidden_weight_variance,
                     config.bias,
+                    config.use_post_activation_linear,
                 )
                 for _ in range(config.L)
             ]
@@ -121,5 +144,9 @@ class ParityResidualNet(nn.Module):
             variances[f"blocks.{i}.linear.weight"] = (
                 block.linear.weight.detach().float().var(unbiased=False).item()
             )
+            if block.post_activation_linear is not None:
+                variances[f"blocks.{i}.post_activation_linear.weight"] = (
+                    block.post_activation_linear.weight.detach().float().var(unbiased=False).item()
+                )
         variances["readout.weight"] = self.readout.weight.detach().float().var(unbiased=False).item()
         return variances

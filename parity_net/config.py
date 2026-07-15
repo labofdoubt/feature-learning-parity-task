@@ -18,6 +18,7 @@ class ModelConfig:
     embedding_weight_variance: float | None = None
     hidden_weight_variance: float = 1.0
     readout_weight_variance: float = 1e-4
+    use_post_activation_linear: bool = False
     bias: bool = False
 
 
