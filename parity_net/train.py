@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 import pandas as pd
 import torch
 import torch.nn.functional as F
+from tqdm.auto import tqdm
 
 from .checkpoint import save_checkpoint
 from .config import ExperimentConfig, OptimizerConfig, load_config, save_config, write_default_config
@@ -97,7 +99,15 @@ def train(config: ExperimentConfig) -> Path:
         barrier_c = 7.0 / model_config.N
 
     history = []
-    for step in range(1, training.num_steps + 1):
+    start_time = time.perf_counter()
+    progress = tqdm(
+        range(1, training.num_steps + 1),
+        total=training.num_steps,
+        desc="training",
+        unit="step",
+        dynamic_ncols=True,
+    )
+    for step in progress:
         model.train()
         x_batch = sample_inputs(training.batch_size, model_config.input_dim, device).to(dtype=dtype)
         y_batch = labels_from_inputs(x_batch, model_config.relevant_dim).to(dtype=dtype)
@@ -111,18 +121,31 @@ def train(config: ExperimentConfig) -> Path:
         loss = mse + barrier
         loss.backward()
         optimizer.step()
+        progress.set_postfix(
+            train_mse=f"{mse.item():.4g}",
+            barrier=f"{barrier.item():.4g}",
+            loss=f"{loss.item():.4g}",
+        )
 
         if training.log_every and step % training.log_every == 0:
             metrics = evaluate(model, test_data.x, test_data.y, training.batch_size)
+            elapsed_seconds = time.perf_counter() - start_time
             row = {
                 "step": step,
+                "elapsed_seconds": elapsed_seconds,
                 "train_mse": mse.item(),
                 "barrier": barrier.item(),
                 "loss": loss.item(),
                 **metrics,
             }
             history.append(row)
-            print(row)
+            progress.set_postfix(
+                train_mse=f"{mse.item():.4g}",
+                test_mse=f"{metrics['test_mse']:.4g}",
+                barrier=f"{barrier.item():.4g}",
+                loss=f"{loss.item():.4g}",
+            )
+            tqdm.write(str(row))
             pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)
 
         if training.checkpoint_every and step % training.checkpoint_every == 0:
@@ -138,7 +161,11 @@ def train(config: ExperimentConfig) -> Path:
             )
 
     final_metrics = evaluate(model, test_data.x, test_data.y, training.batch_size)
-    final_row = {"step": training.num_steps, **final_metrics}
+    final_row = {
+        "step": training.num_steps,
+        "elapsed_seconds": time.perf_counter() - start_time,
+        **final_metrics,
+    }
     history.append(final_row)
     pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)
 
