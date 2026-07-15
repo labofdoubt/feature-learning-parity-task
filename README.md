@@ -19,11 +19,12 @@ pip install -e .
 parity-train --config parity_net/default_config.yaml
 ```
 
-The default run writes:
+The default run samples a fresh random training batch at every optimizer step
+and keeps one fixed held-out test set for evaluation. It writes:
 
 - `runs/parity/config.yaml`
 - `runs/parity/metrics.csv`
-- `runs/parity/checkpoints/epoch_*.pt`
+- `runs/parity/checkpoints/step_*.pt`
 - `runs/parity/checkpoints/final.pt`
 
 ## Analyze
@@ -50,7 +51,8 @@ The initialization variance fields are literal per-entry variances:
 `std = sqrt(hidden_weight_variance)`, and `readout_weight_variance`
 initializes readout weights with `std = sqrt(readout_weight_variance)`.
 
-`TrainingConfig` controls data size, optimizer, checkpointing, and the readout
-barrier parameters. The barrier coefficient `c` lives in the training config
-because it is a loss regularizer. If `barrier_c` is omitted, training uses
-`7 / N`, matching the mean-field-scale box from `MOTIVATION.md`.
+`TrainingConfig` controls `num_steps`, fresh-batch size, fixed held-out test
+set size, optimizer, checkpointing, and the readout barrier parameters. The
+barrier coefficient `c` lives in the training config because it is a loss
+regularizer. If `barrier_c` is omitted, training uses `7 / N`, matching the
+mean-field-scale box from `MOTIVATION.md`.

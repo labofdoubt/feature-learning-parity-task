@@ -31,15 +31,14 @@ class OptimizerConfig:
 
 @dataclass
 class TrainingConfig:
-    train_samples: int = 100_000
+    num_steps: int = 10_000
     test_samples: int = 20_000
     batch_size: int = 512
-    epochs: int = 20
     seed: int = 0
     device: str = "auto"
     dtype: Literal["float32", "float64"] = "float32"
     log_every: int = 100
-    checkpoint_every: int = 1
+    checkpoint_every: int = 1_000
     output_dir: str = "runs/parity"
     barrier_c: float | None = None
     barrier_lambda: float = 10.0

@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 from .checkpoint import save_checkpoint
 from .config import ExperimentConfig, OptimizerConfig, load_config, save_config, write_default_config
-from .data import DEGREE_SLICES, make_dataset, make_loader
+from .data import DEGREE_SLICES, labels_from_inputs, make_dataset, sample_inputs
 from .model import ParityResidualNet
 
 
@@ -82,13 +82,6 @@ def train(config: ExperimentConfig) -> Path:
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     save_config(config, output_dir / "config.yaml")
 
-    train_data = make_dataset(
-        training.train_samples,
-        model_config.input_dim,
-        model_config.relevant_dim,
-        device,
-        dtype,
-    )
     test_data = make_dataset(
         training.test_samples,
         model_config.input_dim,
@@ -96,7 +89,6 @@ def train(config: ExperimentConfig) -> Path:
         device,
         dtype,
     )
-    loader = make_loader(train_data, training.batch_size, shuffle=True)
 
     model = ParityResidualNet(model_config).to(device=device, dtype=dtype)
     optimizer = build_optimizer(model, training.optimizer)
@@ -105,58 +97,60 @@ def train(config: ExperimentConfig) -> Path:
         barrier_c = 7.0 / model_config.N
 
     history = []
-    step = 0
-    for epoch in range(1, training.epochs + 1):
+    for step in range(1, training.num_steps + 1):
         model.train()
-        for x_batch, y_batch in loader:
-            step += 1
-            optimizer.zero_grad(set_to_none=True)
-            pred = model(x_batch)
-            mse = F.mse_loss(pred, y_batch)
-            barrier = torch.zeros((), device=device, dtype=dtype)
-            if model_config.use_readout_barrier:
-                barrier = model.readout_barrier(barrier_c, training.barrier_lambda)
-            loss = mse + barrier
-            loss.backward()
-            optimizer.step()
+        x_batch = sample_inputs(training.batch_size, model_config.input_dim, device).to(dtype=dtype)
+        y_batch = labels_from_inputs(x_batch, model_config.relevant_dim).to(dtype=dtype)
 
-            if training.log_every and step % training.log_every == 0:
-                row = {
-                    "epoch": epoch,
-                    "step": step,
-                    "train_mse": mse.item(),
-                    "barrier": barrier.item(),
-                    "loss": loss.item(),
-                }
-                history.append(row)
-                print(row)
+        optimizer.zero_grad(set_to_none=True)
+        pred = model(x_batch)
+        mse = F.mse_loss(pred, y_batch)
+        barrier = torch.zeros((), device=device, dtype=dtype)
+        if model_config.use_readout_barrier:
+            barrier = model.readout_barrier(barrier_c, training.barrier_lambda)
+        loss = mse + barrier
+        loss.backward()
+        optimizer.step()
 
-        metrics = evaluate(model, test_data.x, test_data.y, training.batch_size)
-        row = {"epoch": epoch, "step": step, **metrics}
-        history.append(row)
-        print(row)
-        pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)
+        if training.log_every and step % training.log_every == 0:
+            metrics = evaluate(model, test_data.x, test_data.y, training.batch_size)
+            row = {
+                "step": step,
+                "train_mse": mse.item(),
+                "barrier": barrier.item(),
+                "loss": loss.item(),
+                **metrics,
+            }
+            history.append(row)
+            print(row)
+            pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)
 
-        if training.checkpoint_every and epoch % training.checkpoint_every == 0:
+        if training.checkpoint_every and step % training.checkpoint_every == 0:
+            metrics = evaluate(model, test_data.x, test_data.y, training.batch_size)
             save_checkpoint(
-                ckpt_dir / f"epoch_{epoch:04d}.pt",
+                ckpt_dir / f"step_{step:08d}.pt",
                 model=model,
                 optimizer=optimizer,
-                epoch=epoch,
+                epoch=0,
                 step=step,
                 config=config,
                 metrics=metrics,
             )
+
+    final_metrics = evaluate(model, test_data.x, test_data.y, training.batch_size)
+    final_row = {"step": training.num_steps, **final_metrics}
+    history.append(final_row)
+    pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)
 
     final_path = ckpt_dir / "final.pt"
     save_checkpoint(
         final_path,
         model=model,
         optimizer=optimizer,
-        epoch=training.epochs,
-        step=step,
+        epoch=0,
+        step=training.num_steps,
         config=config,
-        metrics=evaluate(model, test_data.x, test_data.y, training.batch_size),
+        metrics=final_metrics,
     )
     return final_path
 
