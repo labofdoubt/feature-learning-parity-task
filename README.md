@@ -45,6 +45,10 @@ intervention.
 `ModelConfig` controls the network shape: width `N`, depth
 `L`, readout barrier toggle, hidden-layer initialization variance,
 and readout initialization variance.
+The initialization variance fields are literal per-entry variances:
+`hidden_weight_variance` initializes hidden weights with
+`std = sqrt(hidden_weight_variance)`, and `readout_weight_variance`
+initializes readout weights with `std = sqrt(readout_weight_variance)`.
 
 `TrainingConfig` controls data size, optimizer, checkpointing, and the readout
 barrier parameters. The barrier coefficient `c` lives in the training config

@@ -33,7 +33,7 @@ class ResidualBlock(nn.Module):
         super().__init__()
         self.linear = nn.Linear(width, width, bias=bias)
         self.activation = activation_from_name(activation)
-        nn.init.normal_(self.linear.weight, mean=0.0, std=math.sqrt(variance / width))
+        nn.init.normal_(self.linear.weight, mean=0.0, std=math.sqrt(variance))
         if self.linear.bias is not None:
             nn.init.zeros_(self.linear.bias)
 
@@ -68,7 +68,7 @@ class ParityResidualNet(nn.Module):
         nn.init.normal_(
             self.readout.weight,
             mean=0.0,
-            std=math.sqrt(config.readout_weight_variance / config.N),
+            std=math.sqrt(config.readout_weight_variance),
         )
         if self.readout.bias is not None:
             nn.init.zeros_(self.readout.bias)
