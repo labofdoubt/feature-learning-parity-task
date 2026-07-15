@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parity-net"
+version = "0.1.0"
+description = "Mean-field-style residual networks for binary-tree parity tasks."
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.1",
+  "pandas>=2.0",
+  "matplotlib>=3.7",
+  "pyyaml>=6.0",
+]
+
+[project.scripts]
+parity-train = "parity_net.train:main"
+parity-analyze = "parity_net.analysis:main"
+
+[tool.setuptools.packages.find]
+include = ["parity_net*"]

@@ -1,0 +1,31 @@
+model:
+  input_dim: 32
+  relevant_dim: 16
+  N: 1024
+  L: 4
+  activation: silu
+  use_readout_barrier: true
+  hidden_weight_variance: 1.0
+  readout_weight_variance: 0.0001
+  bias: false
+training:
+  train_samples: 100000
+  test_samples: 20000
+  batch_size: 512
+  epochs: 20
+  seed: 0
+  device: auto
+  dtype: float32
+  log_every: 100
+  checkpoint_every: 1
+  output_dir: runs/parity
+  barrier_c:
+  barrier_lambda: 10.0
+  optimizer:
+    name: adamw
+    lr: 0.001
+    weight_decay: 0.0
+    momentum: 0.0
+    betas:
+    - 0.9
+    - 0.999
