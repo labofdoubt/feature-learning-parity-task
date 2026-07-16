@@ -26,6 +26,9 @@ training:
   optimizer:
     name: adamw
     lr: 0.001
+    lr_embedding:
+    lr_hidden:
+    lr_readout:
     weight_decay: 0.0
     momentum: 0.0
     betas:

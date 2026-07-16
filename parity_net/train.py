@@ -41,17 +41,35 @@ def resolve_dtype(dtype_name: str) -> torch.dtype:
 
 
 def build_optimizer(model: ParityResidualNet, config: OptimizerConfig) -> torch.optim.Optimizer:
-    trainable = [p for p in model.parameters() if p.requires_grad]
+    param_groups = []
+    group_specs = [
+        ("embedding", model.embedding.parameters(), config.lr_embedding),
+        ("hidden", model.blocks.parameters(), config.lr_hidden),
+        ("readout", model.readout.parameters(), config.lr_readout),
+    ]
+    for name, params, group_lr in group_specs:
+        trainable = [p for p in params if p.requires_grad]
+        if trainable:
+            param_groups.append(
+                {
+                    "params": trainable,
+                    "lr": config.lr if group_lr is None else group_lr,
+                    "name": name,
+                }
+            )
+    if not param_groups:
+        raise ValueError("No trainable parameters found")
+
     if config.name == "sgd":
         return torch.optim.SGD(
-            trainable,
+            param_groups,
             lr=config.lr,
             momentum=config.momentum,
             weight_decay=config.weight_decay,
         )
     if config.name == "adamw":
         return torch.optim.AdamW(
-            trainable,
+            param_groups,
             lr=config.lr,
             betas=config.betas,
             weight_decay=config.weight_decay,
