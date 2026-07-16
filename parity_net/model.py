@@ -87,7 +87,7 @@ class ParityResidualNet(nn.Module):
                     config.embedding_weight_variance,
                 )
             )
-        embedding.weight.requires_grad_(False)
+        embedding.weight.requires_grad_(not config.freeze_embedding)
         self.embedding = embedding
 
         self.blocks = nn.ModuleList(

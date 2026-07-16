@@ -51,7 +51,8 @@ Set `use_post_activation_linear` to `true` to use residual blocks of the form
 The initialization variance fields are literal per-entry variances:
 `embedding_weight_variance` rescales the frozen orthonormal embedding to have
 approximately that per-entry variance; omit it or set it to `null` to keep the
-unscaled QR embedding. `hidden_weight_variance` initializes hidden weights with
+unscaled QR embedding. Set `freeze_embedding` to `false` to train the embedding
+weights. `hidden_weight_variance` initializes hidden weights with
 `std = sqrt(hidden_weight_variance)`, and `readout_weight_variance`
 initializes readout weights with `std = sqrt(readout_weight_variance)`.
 

@@ -16,6 +16,7 @@ class ModelConfig:
     activation: Literal["relu", "gelu", "tanh", "silu"] = "silu"
     use_readout_barrier: bool = True
     embedding_weight_variance: float | None = None
+    freeze_embedding: bool = True
     hidden_weight_variance: float = 1.0
     readout_weight_variance: float = 1e-4
     use_post_activation_linear: bool = False
