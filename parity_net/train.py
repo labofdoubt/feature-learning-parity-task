@@ -11,7 +11,14 @@ from tqdm.auto import tqdm
 
 from .checkpoint import save_checkpoint
 from .config import ExperimentConfig, OptimizerConfig, load_config, save_config, write_default_config
-from .data import DEGREE_SLICES, labels_from_inputs, make_dataset, sample_inputs
+from .data import (
+    DEGREE_SLICES,
+    exclusion_keys,
+    labels_from_inputs,
+    make_dataset,
+    sample_inputs_excluding,
+    save_dataset,
+)
 from .model import ParityResidualNet
 
 
@@ -91,6 +98,9 @@ def train(config: ExperimentConfig) -> Path:
         device,
         dtype,
     )
+    test_data_path = output_dir / "test_data.pt"
+    save_dataset(test_data, test_data_path)
+    test_exclusion_keys = exclusion_keys(test_data.x)
 
     model = ParityResidualNet(model_config).to(device=device, dtype=dtype)
     optimizer = build_optimizer(model, training.optimizer)
@@ -109,7 +119,12 @@ def train(config: ExperimentConfig) -> Path:
     )
     for step in progress:
         model.train()
-        x_batch = sample_inputs(training.batch_size, model_config.input_dim, device).to(dtype=dtype)
+        x_batch = sample_inputs_excluding(
+            training.batch_size,
+            model_config.input_dim,
+            device,
+            test_exclusion_keys,
+        ).to(dtype=dtype)
         y_batch = labels_from_inputs(x_batch, model_config.relevant_dim).to(dtype=dtype)
 
         optimizer.zero_grad(set_to_none=True)
@@ -158,6 +173,7 @@ def train(config: ExperimentConfig) -> Path:
                 step=step,
                 config=config,
                 metrics=metrics,
+                test_data_path=test_data_path,
             )
 
     final_metrics = evaluate(model, test_data.x, test_data.y, training.batch_size)
@@ -178,6 +194,7 @@ def train(config: ExperimentConfig) -> Path:
         step=training.num_steps,
         config=config,
         metrics=final_metrics,
+        test_data_path=test_data_path,
     )
     return final_path
 

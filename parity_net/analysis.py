@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from .checkpoint import load_checkpoint
-from .data import DEGREE_SLICES, make_dataset
+from .data import DEGREE_SLICES, ParityDataset, make_dataset, load_dataset
 from .train import resolve_device, resolve_dtype
 
 
@@ -82,6 +82,63 @@ def make_pca_intervention(pca: dict[str, torch.Tensor], keep_pcs: int):
     return intervention
 
 
+def resolve_test_data_path(
+    checkpoint: str | Path,
+    training: dict[str, object],
+    test_data_path_hint: str | None = None,
+) -> Path | None:
+    candidates = []
+    if test_data_path_hint:
+        candidates.append(Path(test_data_path_hint))
+    output_dir = training.get("output_dir")
+    if output_dir:
+        candidates.append(Path(str(output_dir)) / "test_data.pt")
+    checkpoint_path = Path(checkpoint)
+    candidates.append(checkpoint_path.parent.parent / "test_data.pt")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def load_or_make_heldout(
+    checkpoint: str | Path,
+    training: dict[str, object],
+    model_config: dict[str, object],
+    *,
+    pca_samples: int | None,
+    device: torch.device,
+    dtype: torch.dtype,
+    test_data_path_hint: str | None = None,
+):
+    test_data_path = resolve_test_data_path(checkpoint, training, test_data_path_hint)
+    if test_data_path is not None:
+        heldout = load_dataset(test_data_path, device, dtype)
+        if pca_samples is not None and pca_samples < heldout.x.shape[0]:
+            heldout = ParityDataset(
+                x=heldout.x[:pca_samples],
+                y=heldout.y[:pca_samples],
+            )
+        elif pca_samples is not None and pca_samples > heldout.x.shape[0]:
+            raise ValueError(
+                f"Requested pca_samples={pca_samples}, but saved test set has "
+                f"{heldout.x.shape[0]} samples"
+            )
+        return heldout, test_data_path
+
+    pca_samples = pca_samples or int(training["test_samples"])
+    torch.manual_seed(int(training["seed"]) + 10_000)
+    heldout = make_dataset(
+        pca_samples,
+        int(model_config["input_dim"]),
+        int(model_config["relevant_dim"]),
+        device,
+        dtype,
+    )
+    return heldout, None
+
+
 def run_analysis(
     checkpoint: str | Path,
     output_dir: str | Path,
@@ -104,14 +161,14 @@ def run_analysis(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     batch_size = batch_size or training["batch_size"]
-    pca_samples = pca_samples or training["test_samples"]
-    torch.manual_seed(training["seed"] + 10_000)
-    heldout = make_dataset(
-        pca_samples,
-        model_config["input_dim"],
-        model_config["relevant_dim"],
-        device,
-        dtype,
+    heldout, test_data_path = load_or_make_heldout(
+        checkpoint,
+        training,
+        model_config,
+        pca_samples=pca_samples,
+        device=device,
+        dtype=dtype,
+        test_data_path_hint=payload.get("test_data_path"),
     )
 
     weight_variances = model.weight_variances()
@@ -164,6 +221,7 @@ def run_analysis(
         "baseline_metrics": baseline_metrics,
         "pca_rank_thresholds": rank_rows,
         "intervention_metrics": intervention_metrics,
+        "test_data_path": str(test_data_path) if test_data_path is not None else None,
     }
     with (output_dir / "analysis_summary.json").open("w") as f:
         json.dump(summary, f, indent=2)

@@ -60,3 +60,6 @@ set size, optimizer, checkpointing, and the readout barrier parameters. The
 barrier coefficient `c` lives in the training config because it is a loss
 regularizer. If `barrier_c` is omitted, training uses `7 / N`, matching the
 mean-field-scale box from `MOTIVATION.md`.
+Training saves the exact held-out test set to `test_data.pt` in the run
+directory and rejects any fresh training batch samples that match that saved
+test set.

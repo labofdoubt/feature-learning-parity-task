@@ -19,6 +19,7 @@ def save_checkpoint(
     step: int,
     config: ExperimentConfig,
     metrics: dict[str, Any] | None = None,
+    test_data_path: str | Path | None = None,
 ) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -29,6 +30,7 @@ def save_checkpoint(
         "step": step,
         "config": to_dict(config),
         "metrics": metrics or {},
+        "test_data_path": str(test_data_path) if test_data_path is not None else None,
     }
     torch.save(payload, path)
 
