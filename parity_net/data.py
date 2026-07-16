@@ -30,7 +30,7 @@ def input_key_powers(input_dim: int, device: torch.device) -> torch.Tensor:
 def input_keys(x: torch.Tensor) -> torch.Tensor:
     powers = input_key_powers(x.shape[1], x.device)
     bits = (x > 0).to(dtype=torch.long)
-    return bits @ powers
+    return torch.sum(bits * powers, dim=1)
 
 
 def exclusion_keys(x: torch.Tensor) -> torch.Tensor:
