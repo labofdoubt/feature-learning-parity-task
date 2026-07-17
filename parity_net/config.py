@@ -13,7 +13,7 @@ class ModelConfig:
     relevant_dim: int = 16
     N: int = 1024
     L: int = 4
-    activation: Literal["relu", "gelu", "tanh", "silu"] = "silu"
+    activation: Literal["relu", "gelu", "tanh", "silu", "half-tanh"] = "silu"
     use_readout_barrier: bool = True
     embedding_weight_variance: float | None = None
     freeze_embedding: bool = True

@@ -9,6 +9,11 @@ from torch import nn
 from .config import ModelConfig
 
 
+class HalfTanh(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.relu(torch.tanh(x))
+
+
 def activation_from_name(name: str) -> nn.Module:
     if name == "relu":
         return nn.ReLU()
@@ -18,6 +23,8 @@ def activation_from_name(name: str) -> nn.Module:
         return nn.Tanh()
     if name == "silu":
         return nn.SiLU()
+    if name == "half-tanh":
+        return HalfTanh()
     raise ValueError(f"Unknown activation: {name}")
 
 
