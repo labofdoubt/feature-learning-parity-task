@@ -61,8 +61,10 @@ initializes readout weights with `std = sqrt(readout_weight_variance)`.
 `TrainingConfig` controls `num_steps`, fresh-batch size, fixed held-out test
 set size, optimizer, checkpointing, and the readout barrier parameters. The
 optimizer supports optional per-group learning rates: `lr_embedding`,
-`lr_hidden`, and `lr_readout`; any omitted value falls back to `lr`, and
-`lr_embedding` is ignored when `freeze_embedding` leaves the embedding frozen.
+`lr_hidden`, and `lr_readout`; any omitted value falls back to `lr`. It also
+supports optional per-group weight decays: `wd_embedding`, `wd_hidden`, and
+`wd_readout`; any omitted value falls back to `weight_decay`. Embedding-group
+optimizer settings are ignored when `freeze_embedding` leaves the embedding frozen.
 barrier coefficient `c` lives in the training config because it is a loss
 regularizer. If `barrier_c` is omitted, training uses `7 / N`, matching the
 mean-field-scale box from `MOTIVATION.md`.

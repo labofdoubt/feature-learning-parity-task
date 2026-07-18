@@ -43,17 +43,18 @@ def resolve_dtype(dtype_name: str) -> torch.dtype:
 def build_optimizer(model: ParityResidualNet, config: OptimizerConfig) -> torch.optim.Optimizer:
     param_groups = []
     group_specs = [
-        ("embedding", model.embedding.parameters(), config.lr_embedding),
-        ("hidden", model.blocks.parameters(), config.lr_hidden),
-        ("readout", model.readout.parameters(), config.lr_readout),
+        ("embedding", model.embedding.parameters(), config.lr_embedding, config.wd_embedding),
+        ("hidden", model.blocks.parameters(), config.lr_hidden, config.wd_hidden),
+        ("readout", model.readout.parameters(), config.lr_readout, config.wd_readout),
     ]
-    for name, params, group_lr in group_specs:
+    for name, params, group_lr, group_wd in group_specs:
         trainable = [p for p in params if p.requires_grad]
         if trainable:
             param_groups.append(
                 {
                     "params": trainable,
                     "lr": config.lr if group_lr is None else group_lr,
+                    "weight_decay": config.weight_decay if group_wd is None else group_wd,
                     "name": name,
                 }
             )

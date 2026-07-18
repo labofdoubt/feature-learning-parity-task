@@ -30,6 +30,9 @@ training:
     lr_hidden:
     lr_readout:
     weight_decay: 0.0
+    wd_embedding:
+    wd_hidden:
+    wd_readout:
     momentum: 0.0
     betas:
     - 0.9

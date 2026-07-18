@@ -31,6 +31,9 @@ class OptimizerConfig:
     lr_hidden: float | None = None
     lr_readout: float | None = None
     weight_decay: float = 0.0
+    wd_embedding: float | None = None
+    wd_hidden: float | None = None
+    wd_readout: float | None = None
     momentum: float = 0.0
     betas: tuple[float, float] = (0.9, 0.999)
 
