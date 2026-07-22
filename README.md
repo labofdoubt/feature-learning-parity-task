@@ -47,11 +47,13 @@ intervention.
 
 `TaskConfig` controls the parity task. `input_dim` is the full sequence length,
 and `relevant_dim` is the number of leading coordinates used in the binary-tree
-parity targets. Both must be even, and `relevant_dim` must be a power of two.
-Use `exclude_targets` to remove targets from both the readout and the MSE, for
-example `["d8", "d16"]`, `["d8_*", "d16_*"]`, or exact names such as
-`["d4_2"]`. For backward compatibility, old configs with `input_dim` and
-`relevant_dim` only under `model` still load.
+parity targets. Both must be even. Included degree-`k` targets require
+`relevant_dim` to be divisible by `k`; therefore a d2-only task works for any
+even `relevant_dim`, while the full binary-tree task still needs a compatible
+power-of-two `relevant_dim`. Use `exclude_targets` to remove targets from both
+the readout and the MSE, for example `["d8", "d16"]`, `["d8_*", "d16_*"]`, or
+exact names such as `["d4_2"]`. For backward compatibility, old configs with
+`input_dim` and `relevant_dim` only under `model` still load.
 
 `ModelConfig` controls the network shape: width `N`, depth
 `L`, readout barrier toggle, embedding scale, residual-block form,

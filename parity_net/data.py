@@ -56,8 +56,6 @@ def _validate_task_shape(input_dim: int, relevant_dim: int) -> None:
         raise ValueError("input_dim and relevant_dim must both be even")
     if relevant_dim > input_dim:
         raise ValueError("relevant_dim must be <= input_dim")
-    if relevant_dim & (relevant_dim - 1):
-        raise ValueError("relevant_dim must be a power of two for the binary parity tree")
 
 
 def _target_is_excluded(spec: TargetSpec, exclude_targets: list[str] | tuple[str, ...]) -> bool:
@@ -66,6 +64,12 @@ def _target_is_excluded(spec: TargetSpec, exclude_targets: list[str] | tuple[str
         if pattern in {spec.name, degree_name} or fnmatch(spec.name, pattern):
             return True
     return False
+
+
+def _degree_is_excluded(degree: int, exclude_targets: list[str] | tuple[str, ...]) -> bool:
+    degree_name = f"d{degree}"
+    dummy_name = f"{degree_name}_0"
+    return any(pattern == degree_name or fnmatch(dummy_name, pattern) for pattern in exclude_targets)
 
 
 def tree_parity_specs(
@@ -77,6 +81,15 @@ def tree_parity_specs(
     specs: list[TargetSpec] = []
     degree = 2
     while degree <= relevant_dim:
+        if relevant_dim % degree:
+            if _degree_is_excluded(degree, exclude_targets):
+                degree *= 2
+                continue
+            raise ValueError(
+                f"Cannot include d{degree} targets because relevant_dim={relevant_dim} "
+                f"is not divisible by {degree}; exclude d{degree} targets or choose "
+                "a compatible relevant_dim"
+            )
         for start in range(0, relevant_dim, degree):
             spec = TargetSpec(
                 name=f"d{degree}_{start // degree}",
