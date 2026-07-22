@@ -20,12 +20,19 @@ def predict_in_batches(
     x: torch.Tensor,
     batch_size: int,
     intervention: tuple[int, Callable[[torch.Tensor], torch.Tensor]] | None = None,
+    block_intervention: tuple[int, Callable[[torch.Tensor], torch.Tensor]] | None = None,
 ) -> torch.Tensor:
     preds = []
     model.eval()
     for start in range(0, x.shape[0], batch_size):
         stop = min(start + batch_size, x.shape[0])
-        preds.append(model(x[start:stop], intervention=intervention))
+        preds.append(
+            model(
+                x[start:stop],
+                intervention=intervention,
+                block_intervention=block_intervention,
+            )
+        )
     return torch.cat(preds, dim=0)
 
 

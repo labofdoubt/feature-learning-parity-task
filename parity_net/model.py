@@ -72,8 +72,15 @@ class ResidualBlock(nn.Module):
             if self.post_activation_linear.bias is not None:
                 nn.init.zeros_(self.post_activation_linear.bias)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        activation_intervention: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    ) -> torch.Tensor:
         update = self.activation(self.linear(x))
+        if activation_intervention is not None:
+            update = activation_intervention(update)
         if self.post_activation_linear is not None:
             update = self.post_activation_linear(update)
         return x + update
@@ -124,13 +131,17 @@ class ParityResidualNet(nn.Module):
         *,
         return_activations: bool = False,
         intervention: tuple[int, Callable[[torch.Tensor], torch.Tensor]] | None = None,
+        block_intervention: tuple[int, Callable[[torch.Tensor], torch.Tensor]] | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, list[torch.Tensor]]:
         h = self.embedding(x)
         activations = [h]
         for layer_idx, block in enumerate(self.blocks):
             if intervention is not None and layer_idx == intervention[0]:
                 h = intervention[1](h)
-            h = block(h)
+            activation_intervention = None
+            if block_intervention is not None and layer_idx == block_intervention[0]:
+                activation_intervention = block_intervention[1]
+            h = block(h, activation_intervention=activation_intervention)
             activations.append(h)
         if intervention is not None and intervention[0] == len(self.blocks):
             h = intervention[1](h)
