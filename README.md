@@ -3,9 +3,11 @@
 Minimal PyTorch library for training residual networks on the binary-tree
 k-parity staircase described in `MOTIVATION.md`.
 
-The task uses 32-dimensional `{-1,+1}` inputs. The first 16 coordinates define
-15 outputs: eight degree-2 parities, four degree-4 parities, two degree-8
-parities, and one degree-16 parity. The remaining 16 coordinates are noise.
+By default the task uses 32-dimensional `{-1,+1}` inputs. The first 16
+coordinates define 15 outputs: eight degree-2 parities, four degree-4 parities,
+two degree-8 parities, and one degree-16 parity. The remaining coordinates are
+noise. The task config can change the input length, the number of leading
+relevant positions, and which binary-tree parity targets are included.
 
 ## Install
 
@@ -42,6 +44,14 @@ This writes weight variances, baseline per-degree MSE, PCA ranks needed for
 intervention.
 
 ## Config Notes
+
+`TaskConfig` controls the parity task. `input_dim` is the full sequence length,
+and `relevant_dim` is the number of leading coordinates used in the binary-tree
+parity targets. Both must be even, and `relevant_dim` must be a power of two.
+Use `exclude_targets` to remove targets from both the readout and the MSE, for
+example `["d8", "d16"]`, `["d8_*", "d16_*"]`, or exact names such as
+`["d4_2"]`. For backward compatibility, old configs with `input_dim` and
+`relevant_dim` only under `model` still load.
 
 `ModelConfig` controls the network shape: width `N`, depth
 `L`, readout barrier toggle, embedding scale, residual-block form,

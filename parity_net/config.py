@@ -24,6 +24,13 @@ class ModelConfig:
 
 
 @dataclass
+class TaskConfig:
+    input_dim: int = 32
+    relevant_dim: int = 16
+    exclude_targets: list[str] = field(default_factory=list)
+
+
+@dataclass
 class OptimizerConfig:
     name: Literal["sgd", "adamw"] = "adamw"
     lr: float = 1e-3
@@ -57,7 +64,22 @@ class TrainingConfig:
 @dataclass
 class ExperimentConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
+    task: TaskConfig = field(default_factory=TaskConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+
+    def __post_init__(self) -> None:
+        default_task = TaskConfig()
+        if self.task == default_task and (
+            self.model.input_dim != default_task.input_dim
+            or self.model.relevant_dim != default_task.relevant_dim
+        ):
+            self.task = TaskConfig(
+                input_dim=self.model.input_dim,
+                relevant_dim=self.model.relevant_dim,
+            )
+        else:
+            self.model.input_dim = self.task.input_dim
+            self.model.relevant_dim = self.task.relevant_dim
 
 
 def to_dict(config: Any) -> dict[str, Any]:
@@ -77,11 +99,23 @@ def save_config(config: ExperimentConfig, path: str | Path) -> None:
 def load_config(path: str | Path) -> ExperimentConfig:
     with Path(path).open() as f:
         raw = yaml.safe_load(f)
+    task_raw = raw.pop("task", None)
+    model_raw = raw["model"]
+    if task_raw is None:
+        task = TaskConfig(
+            input_dim=model_raw.get("input_dim", 32),
+            relevant_dim=model_raw.get("relevant_dim", 16),
+        )
+    else:
+        task = TaskConfig(**task_raw)
+        model_raw["input_dim"] = task.input_dim
+        model_raw["relevant_dim"] = task.relevant_dim
     opt = OptimizerConfig(**raw["training"].pop("optimizer"))
     if isinstance(opt.betas, list):
         opt.betas = tuple(opt.betas)
     return ExperimentConfig(
-        model=ModelConfig(**raw["model"]),
+        model=ModelConfig(**model_raw),
+        task=task,
         training=TrainingConfig(optimizer=opt, **raw["training"]),
     )
 

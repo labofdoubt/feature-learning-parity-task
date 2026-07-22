@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from .checkpoint import load_checkpoint
-from .data import DEGREE_SLICES, ParityDataset, make_dataset, load_dataset
+from .data import ParityDataset, degree_slices_for_targets, make_dataset, load_dataset, target_names
 from .train import resolve_device, resolve_dtype
 
 
@@ -29,9 +29,15 @@ def predict_in_batches(
     return torch.cat(preds, dim=0)
 
 
-def per_degree_mse(pred: torch.Tensor, y: torch.Tensor) -> dict[str, float]:
+def per_degree_mse(
+    pred: torch.Tensor,
+    y: torch.Tensor,
+    target_names_: list[str] | None = None,
+) -> dict[str, float]:
     metrics = {"mse_all": F.mse_loss(pred, y).item()}
-    for degree, slc in DEGREE_SLICES.items():
+    if target_names_ is None:
+        target_names_ = target_names()
+    for degree, slc in degree_slices_for_targets(target_names_).items():
         metrics[f"mse_d{degree}"] = F.mse_loss(pred[:, slc], y[:, slc]).item()
     return metrics
 
@@ -106,6 +112,7 @@ def load_or_make_heldout(
     checkpoint: str | Path,
     training: dict[str, object],
     model_config: dict[str, object],
+    task_config: dict[str, object],
     *,
     pca_samples: int | None,
     device: torch.device,
@@ -131,10 +138,11 @@ def load_or_make_heldout(
     torch.manual_seed(int(training["seed"]) + 10_000)
     heldout = make_dataset(
         pca_samples,
-        int(model_config["input_dim"]),
-        int(model_config["relevant_dim"]),
+        int(task_config["input_dim"]),
+        int(task_config["relevant_dim"]),
         device,
         dtype,
+        list(task_config.get("exclude_targets", [])),
     )
     return heldout, None
 
@@ -153,6 +161,15 @@ def run_analysis(
     config = payload["config"]
     training = config["training"]
     model_config = config["model"]
+    task_config = config.get("task") or {
+        "input_dim": model_config["input_dim"],
+        "relevant_dim": model_config["relevant_dim"],
+        "exclude_targets": [],
+    }
+    target_names_ = target_names(
+        int(task_config["relevant_dim"]),
+        list(task_config.get("exclude_targets", [])),
+    )
     device = resolve_device(training["device"])
     dtype = resolve_dtype(training["dtype"])
     model = model.to(device=device, dtype=dtype)
@@ -165,6 +182,7 @@ def run_analysis(
         checkpoint,
         training,
         model_config,
+        task_config,
         pca_samples=pca_samples,
         device=device,
         dtype=dtype,
@@ -177,7 +195,7 @@ def run_analysis(
     ).to_csv(output_dir / "weight_variances.csv", index=False)
 
     pred = predict_in_batches(model, heldout.x, batch_size)
-    baseline_metrics = per_degree_mse(pred, heldout.y)
+    baseline_metrics = per_degree_mse(pred, heldout.y, target_names_)
     pd.DataFrame([baseline_metrics]).to_csv(output_dir / "baseline_mse.csv", index=False)
 
     activations = collect_layer_activations(model, heldout.x, batch_size)
@@ -210,7 +228,7 @@ def run_analysis(
         intervention_metrics = {
             "intervention_layer": intervention_layer,
             "keep_pcs": keep_pcs,
-            **per_degree_mse(pred_intervened, heldout.y),
+            **per_degree_mse(pred_intervened, heldout.y, target_names_),
         }
         pd.DataFrame([intervention_metrics]).to_csv(
             output_dir / "pca_intervention_mse.csv", index=False

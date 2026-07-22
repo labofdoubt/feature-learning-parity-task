@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from pathlib import Path
 
 import torch
@@ -21,6 +22,13 @@ class ParityDataset:
     y: torch.Tensor
 
 
+@dataclass(frozen=True)
+class TargetSpec:
+    name: str
+    degree: int
+    indices: tuple[int, ...]
+
+
 def input_key_powers(input_dim: int, device: torch.device) -> torch.Tensor:
     if input_dim > 62:
         raise ValueError("Packed input keys support input_dim <= 62")
@@ -38,13 +46,72 @@ def exclusion_keys(x: torch.Tensor) -> torch.Tensor:
 
 
 def tree_parity_indices(relevant_dim: int = 16) -> list[tuple[int, ...]]:
-    if relevant_dim != 16:
-        raise ValueError("The binary-tree staircase is currently defined for relevant_dim=16")
-    groups: list[tuple[int, ...]] = []
-    for degree in (2, 4, 8, 16):
+    return [spec.indices for spec in tree_parity_specs(relevant_dim)]
+
+
+def _validate_task_shape(input_dim: int, relevant_dim: int) -> None:
+    if input_dim <= 0 or relevant_dim <= 0:
+        raise ValueError("input_dim and relevant_dim must be positive")
+    if input_dim % 2 or relevant_dim % 2:
+        raise ValueError("input_dim and relevant_dim must both be even")
+    if relevant_dim > input_dim:
+        raise ValueError("relevant_dim must be <= input_dim")
+    if relevant_dim & (relevant_dim - 1):
+        raise ValueError("relevant_dim must be a power of two for the binary parity tree")
+
+
+def _target_is_excluded(spec: TargetSpec, exclude_targets: list[str] | tuple[str, ...]) -> bool:
+    degree_name = f"d{spec.degree}"
+    for pattern in exclude_targets:
+        if pattern in {spec.name, degree_name} or fnmatch(spec.name, pattern):
+            return True
+    return False
+
+
+def tree_parity_specs(
+    relevant_dim: int = 16,
+    exclude_targets: list[str] | tuple[str, ...] | None = None,
+) -> list[TargetSpec]:
+    _validate_task_shape(relevant_dim, relevant_dim)
+    exclude_targets = exclude_targets or []
+    specs: list[TargetSpec] = []
+    degree = 2
+    while degree <= relevant_dim:
         for start in range(0, relevant_dim, degree):
-            groups.append(tuple(range(start, start + degree)))
-    return groups
+            spec = TargetSpec(
+                name=f"d{degree}_{start // degree}",
+                degree=degree,
+                indices=tuple(range(start, start + degree)),
+            )
+            if not _target_is_excluded(spec, exclude_targets):
+                specs.append(spec)
+        degree *= 2
+    if not specs:
+        raise ValueError("Task has no targets after applying exclude_targets")
+    return specs
+
+
+def target_names(
+    relevant_dim: int = 16,
+    exclude_targets: list[str] | tuple[str, ...] | None = None,
+) -> list[str]:
+    return [spec.name for spec in tree_parity_specs(relevant_dim, exclude_targets)]
+
+
+def degree_slices_for_targets(target_names_: list[str]) -> dict[int, slice]:
+    slices: dict[int, slice] = {}
+    start = 0
+    while start < len(target_names_):
+        degree = int(target_names_[start].split("_", 1)[0][1:])
+        stop = start + 1
+        while stop < len(target_names_):
+            next_degree = int(target_names_[stop].split("_", 1)[0][1:])
+            if next_degree != degree:
+                break
+            stop += 1
+        slices[degree] = slice(start, stop)
+        start = stop
+    return slices
 
 
 def sample_inputs(n: int, input_dim: int, device: torch.device) -> torch.Tensor:
@@ -84,10 +151,14 @@ def sample_inputs_excluding(
     return torch.cat(chunks, dim=0)
 
 
-def labels_from_inputs(x: torch.Tensor, relevant_dim: int = 16) -> torch.Tensor:
+def labels_from_inputs(
+    x: torch.Tensor,
+    relevant_dim: int = 16,
+    exclude_targets: list[str] | tuple[str, ...] | None = None,
+) -> torch.Tensor:
     outputs = []
-    for indices in tree_parity_indices(relevant_dim):
-        idx = torch.tensor(indices, device=x.device, dtype=torch.long)
+    for spec in tree_parity_specs(relevant_dim, exclude_targets):
+        idx = torch.tensor(spec.indices, device=x.device, dtype=torch.long)
         outputs.append(torch.prod(x[:, idx], dim=1))
     return torch.stack(outputs, dim=1).to(dtype=x.dtype)
 
@@ -98,9 +169,11 @@ def make_dataset(
     relevant_dim: int,
     device: torch.device,
     dtype: torch.dtype,
+    exclude_targets: list[str] | tuple[str, ...] | None = None,
 ) -> ParityDataset:
+    _validate_task_shape(input_dim, relevant_dim)
     x = sample_inputs(n, input_dim, device).to(dtype=dtype)
-    y = labels_from_inputs(x, relevant_dim).to(dtype=dtype)
+    y = labels_from_inputs(x, relevant_dim, exclude_targets).to(dtype=dtype)
     return ParityDataset(x=x, y=y)
 
 

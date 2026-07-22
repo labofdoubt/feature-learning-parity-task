@@ -12,12 +12,13 @@ from tqdm.auto import tqdm
 from .checkpoint import save_checkpoint
 from .config import ExperimentConfig, OptimizerConfig, load_config, save_config, write_default_config
 from .data import (
-    DEGREE_SLICES,
+    degree_slices_for_targets,
     exclusion_keys,
     labels_from_inputs,
     make_dataset,
     sample_inputs_excluding,
     save_dataset,
+    target_names,
 )
 from .model import ParityResidualNet
 
@@ -84,6 +85,7 @@ def evaluate(
     x: torch.Tensor,
     y: torch.Tensor,
     batch_size: int,
+    target_names_: list[str] | None = None,
 ) -> dict[str, float]:
     model.eval()
     preds = []
@@ -92,7 +94,9 @@ def evaluate(
         preds.append(model(x[start:stop]))
     pred = torch.cat(preds, dim=0)
     metrics = {"test_mse": F.mse_loss(pred, y).item()}
-    for degree, slc in DEGREE_SLICES.items():
+    if target_names_ is None:
+        target_names_ = target_names()
+    for degree, slc in degree_slices_for_targets(target_names_).items():
         metrics[f"test_mse_d{degree}"] = F.mse_loss(pred[:, slc], y[:, slc]).item()
     return metrics
 
@@ -100,9 +104,15 @@ def evaluate(
 def train(config: ExperimentConfig) -> Path:
     training = config.training
     model_config = config.model
+    task_config = config.task
     device = resolve_device(training.device)
     dtype = resolve_dtype(training.dtype)
     torch.manual_seed(training.seed)
+    target_names_ = target_names(task_config.relevant_dim, task_config.exclude_targets)
+    if model_config.input_dim != task_config.input_dim:
+        model_config.input_dim = task_config.input_dim
+    if model_config.relevant_dim != task_config.relevant_dim:
+        model_config.relevant_dim = task_config.relevant_dim
 
     output_dir = Path(training.output_dir)
     ckpt_dir = output_dir / "checkpoints"
@@ -112,16 +122,17 @@ def train(config: ExperimentConfig) -> Path:
 
     test_data = make_dataset(
         training.test_samples,
-        model_config.input_dim,
-        model_config.relevant_dim,
+        task_config.input_dim,
+        task_config.relevant_dim,
         device,
         dtype,
+        task_config.exclude_targets,
     )
     test_data_path = output_dir / "test_data.pt"
     save_dataset(test_data, test_data_path)
     test_exclusion_keys = exclusion_keys(test_data.x)
 
-    model = ParityResidualNet(model_config).to(device=device, dtype=dtype)
+    model = ParityResidualNet(model_config, output_dim=len(target_names_)).to(device=device, dtype=dtype)
     optimizer = build_optimizer(model, training.optimizer)
     barrier_c = training.barrier_c
     if barrier_c is None:
@@ -140,11 +151,15 @@ def train(config: ExperimentConfig) -> Path:
         model.train()
         x_batch = sample_inputs_excluding(
             training.batch_size,
-            model_config.input_dim,
+            task_config.input_dim,
             device,
             test_exclusion_keys,
         ).to(dtype=dtype)
-        y_batch = labels_from_inputs(x_batch, model_config.relevant_dim).to(dtype=dtype)
+        y_batch = labels_from_inputs(
+            x_batch,
+            task_config.relevant_dim,
+            task_config.exclude_targets,
+        ).to(dtype=dtype)
 
         optimizer.zero_grad(set_to_none=True)
         pred = model(x_batch)
@@ -162,7 +177,7 @@ def train(config: ExperimentConfig) -> Path:
         )
 
         if training.log_every and step % training.log_every == 0:
-            metrics = evaluate(model, test_data.x, test_data.y, training.batch_size)
+            metrics = evaluate(model, test_data.x, test_data.y, training.batch_size, target_names_)
             elapsed_seconds = time.perf_counter() - start_time
             row = {
                 "step": step,
@@ -183,7 +198,7 @@ def train(config: ExperimentConfig) -> Path:
             pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)
 
         if training.checkpoint_every and step % training.checkpoint_every == 0:
-            metrics = evaluate(model, test_data.x, test_data.y, training.batch_size)
+            metrics = evaluate(model, test_data.x, test_data.y, training.batch_size, target_names_)
             save_checkpoint(
                 ckpt_dir / f"step_{step:08d}.pt",
                 model=model,
@@ -195,7 +210,7 @@ def train(config: ExperimentConfig) -> Path:
                 test_data_path=test_data_path,
             )
 
-    final_metrics = evaluate(model, test_data.x, test_data.y, training.batch_size)
+    final_metrics = evaluate(model, test_data.x, test_data.y, training.batch_size, target_names_)
     final_row = {
         "step": training.num_steps,
         "elapsed_seconds": time.perf_counter() - start_time,

@@ -45,16 +45,30 @@ def load_checkpoint(
 
     payload = torch.load(path, map_location=device)
     raw = deepcopy(payload["config"])
-    from .config import ModelConfig, OptimizerConfig, TrainingConfig
+    from .config import ModelConfig, OptimizerConfig, TaskConfig, TrainingConfig
+    from .data import target_names
 
+    task_raw = raw.pop("task", None)
+    model_raw = raw["model"]
+    if task_raw is None:
+        task_config = TaskConfig(
+            input_dim=model_raw.get("input_dim", 32),
+            relevant_dim=model_raw.get("relevant_dim", 16),
+        )
+    else:
+        task_config = TaskConfig(**task_raw)
+        model_raw["input_dim"] = task_config.input_dim
+        model_raw["relevant_dim"] = task_config.relevant_dim
     opt_cfg = OptimizerConfig(**raw["training"].pop("optimizer"))
     if isinstance(opt_cfg.betas, list):
         opt_cfg.betas = tuple(opt_cfg.betas)
     config = ExperimentConfig(
-        model=ModelConfig(**raw["model"]),
+        model=ModelConfig(**model_raw),
+        task=task_config,
         training=TrainingConfig(optimizer=opt_cfg, **raw["training"]),
     )
-    model = ParityResidualNet(config.model).to(device)
+    output_dim = len(target_names(config.task.relevant_dim, config.task.exclude_targets))
+    model = ParityResidualNet(config.model, output_dim=output_dim).to(device)
     model.load_state_dict(payload["model_state"])
 
     optimizer = None
