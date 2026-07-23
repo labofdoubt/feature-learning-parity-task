@@ -167,16 +167,19 @@ class ParityResidualNet(nn.Module):
         block_intervention: tuple[int, Callable[[torch.Tensor], torch.Tensor]] | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, list[torch.Tensor]]:
         h = self.embedding(x)
+        if intervention is not None and intervention[0] == 0:
+            h = intervention[1](h)
         activations = [h]
         layerwise_outputs = []
         next_readout_idx = 0
         for layer_idx, block in enumerate(self.blocks):
-            if intervention is not None and layer_idx == intervention[0]:
-                h = intervention[1](h)
             activation_intervention = None
             if block_intervention is not None and layer_idx == block_intervention[0]:
                 activation_intervention = block_intervention[1]
             h = block(h, activation_intervention=activation_intervention)
+            residual_stream_idx = layer_idx + 1
+            if intervention is not None and intervention[0] == residual_stream_idx:
+                h = intervention[1](h)
             activations.append(h)
             while (
                 self.config.use_layerwise_readouts
@@ -186,8 +189,6 @@ class ParityResidualNet(nn.Module):
                 _, key = self.layerwise_readout_order[next_readout_idx]
                 layerwise_outputs.append(self.layerwise_readouts[key](h))
                 next_readout_idx += 1
-        if intervention is not None and intervention[0] == len(self.blocks):
-            h = intervention[1](h)
         if self.config.use_layerwise_readouts:
             y = torch.cat(layerwise_outputs, dim=1)
         else:

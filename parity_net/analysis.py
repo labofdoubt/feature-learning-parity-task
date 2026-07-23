@@ -45,7 +45,11 @@ def per_degree_mse(
     if target_names_ is None:
         target_names_ = target_names()
     for degree, slc in degree_slices_for_targets(target_names_).items():
-        metrics[f"mse_d{degree}"] = F.mse_loss(pred[:, slc], y[:, slc]).item()
+        stop = min(slc.stop or pred.shape[1], pred.shape[1], y.shape[1])
+        start = min(slc.start or 0, stop)
+        if stop <= start:
+            continue
+        metrics[f"mse_d{degree}"] = F.mse_loss(pred[:, start:stop], y[:, start:stop]).item()
     return metrics
 
 
