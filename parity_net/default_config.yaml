@@ -9,6 +9,7 @@ model:
   freeze_embedding: true
   hidden_weight_variance: 1.0
   readout_weight_variance: 0.0001
+  use_layerwise_readouts: false
   use_post_activation_linear: false
   bias: false
 task:

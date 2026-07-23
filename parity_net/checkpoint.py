@@ -41,7 +41,7 @@ def load_checkpoint(
     *,
     load_optimizer: bool = False,
 ) -> tuple[ParityResidualNet, dict[str, Any], torch.optim.Optimizer | None]:
-    from .train import build_optimizer
+    from .train import build_optimizer, max_target_degree_for_model
 
     payload = torch.load(path, map_location=device)
     raw = deepcopy(payload["config"])
@@ -67,8 +67,17 @@ def load_checkpoint(
         task=task_config,
         training=TrainingConfig(optimizer=opt_cfg, **raw["training"]),
     )
-    output_dim = len(target_names(config.task.relevant_dim, config.task.exclude_targets))
-    model = ParityResidualNet(config.model, output_dim=output_dim).to(device)
+    target_names_ = target_names(
+        config.task.relevant_dim,
+        config.task.exclude_targets,
+        max_target_degree_for_model(config.model),
+    )
+    output_dim = len(target_names_)
+    model = ParityResidualNet(
+        config.model,
+        output_dim=output_dim,
+        target_names_=target_names_,
+    ).to(device)
     model.load_state_dict(payload["model_state"])
 
     optimizer = None

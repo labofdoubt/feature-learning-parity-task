@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import time
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -21,6 +22,12 @@ from .data import (
     target_names,
 )
 from .model import ParityResidualNet
+
+
+def max_target_degree_for_model(model_config) -> int | None:
+    if not model_config.use_layerwise_readouts:
+        return None
+    return min(model_config.relevant_dim, 2**model_config.L)
 
 
 def resolve_device(device_name: str) -> torch.device:
@@ -46,7 +53,7 @@ def build_optimizer(model: ParityResidualNet, config: OptimizerConfig) -> torch.
     group_specs = [
         ("embedding", model.embedding.parameters(), config.lr_embedding, config.wd_embedding),
         ("hidden", model.blocks.parameters(), config.lr_hidden, config.wd_hidden),
-        ("readout", model.readout.parameters(), config.lr_readout, config.wd_readout),
+        ("readout", model.readout_parameters(), config.lr_readout, config.wd_readout),
     ]
     for name, params, group_lr, group_wd in group_specs:
         trainable = [p for p in params if p.requires_grad]
@@ -108,7 +115,8 @@ def train(config: ExperimentConfig) -> Path:
     device = resolve_device(training.device)
     dtype = resolve_dtype(training.dtype)
     torch.manual_seed(training.seed)
-    target_names_ = target_names(task_config.relevant_dim, task_config.exclude_targets)
+    max_degree = max_target_degree_for_model(model_config)
+    target_names_ = target_names(task_config.relevant_dim, task_config.exclude_targets, max_degree)
     if model_config.input_dim != task_config.input_dim:
         model_config.input_dim = task_config.input_dim
     if model_config.relevant_dim != task_config.relevant_dim:
@@ -127,12 +135,27 @@ def train(config: ExperimentConfig) -> Path:
         device,
         dtype,
         task_config.exclude_targets,
+        max_degree,
     )
     test_data_path = output_dir / "test_data.pt"
     save_dataset(test_data, test_data_path)
     test_exclusion_keys = exclusion_keys(test_data.x)
+    input_space_size = 2**task_config.input_dim
+    if test_exclusion_keys.numel() >= input_space_size:
+        warnings.warn(
+            "The saved test set covers the full input space, so training samples "
+            "cannot be drawn while avoiding every test input. Training will continue "
+            "with ordinary random samples, and train/test overlap is possible.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        test_exclusion_keys = torch.empty(0, device=device, dtype=torch.long)
 
-    model = ParityResidualNet(model_config, output_dim=len(target_names_)).to(device=device, dtype=dtype)
+    model = ParityResidualNet(
+        model_config,
+        output_dim=len(target_names_),
+        target_names_=target_names_,
+    ).to(device=device, dtype=dtype)
     optimizer = build_optimizer(model, training.optimizer)
     barrier_c = training.barrier_c
     if barrier_c is None:
@@ -159,6 +182,7 @@ def train(config: ExperimentConfig) -> Path:
             x_batch,
             task_config.relevant_dim,
             task_config.exclude_targets,
+            max_degree,
         ).to(dtype=dtype)
 
         optimizer.zero_grad(set_to_none=True)

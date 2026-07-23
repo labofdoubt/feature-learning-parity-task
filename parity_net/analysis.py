@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 from .checkpoint import load_checkpoint
 from .data import ParityDataset, degree_slices_for_targets, make_dataset, load_dataset, target_names
-from .train import resolve_device, resolve_dtype
+from .train import max_target_degree_for_model, resolve_device, resolve_dtype
 
 
 @torch.no_grad()
@@ -120,6 +120,7 @@ def load_or_make_heldout(
     training: dict[str, object],
     model_config: dict[str, object],
     task_config: dict[str, object],
+    max_degree: int | None,
     *,
     pca_samples: int | None,
     device: torch.device,
@@ -150,6 +151,7 @@ def load_or_make_heldout(
         device,
         dtype,
         list(task_config.get("exclude_targets", [])),
+        max_degree,
     )
     return heldout, None
 
@@ -176,6 +178,7 @@ def run_analysis(
     target_names_ = target_names(
         int(task_config["relevant_dim"]),
         list(task_config.get("exclude_targets", [])),
+        max_target_degree_for_model(model.config),
     )
     device = resolve_device(training["device"])
     dtype = resolve_dtype(training["dtype"])
@@ -194,6 +197,7 @@ def run_analysis(
         device=device,
         dtype=dtype,
         test_data_path_hint=payload.get("test_data_path"),
+        max_degree=max_target_degree_for_model(model.config),
     )
 
     weight_variances = model.weight_variances()

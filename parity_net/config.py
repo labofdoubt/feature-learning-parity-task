@@ -19,6 +19,7 @@ class ModelConfig:
     freeze_embedding: bool = True
     hidden_weight_variance: float = 1.0
     readout_weight_variance: float = 1e-4
+    use_layerwise_readouts: bool = False
     use_post_activation_linear: bool = False
     bias: bool = False
 
