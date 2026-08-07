@@ -64,6 +64,7 @@ class TrainingConfig:
     output_dir: str = "runs/parity"
     barrier_c: float | None = None
     barrier_lambda: float = 10.0
+    matmul_precision: Literal["highest", "high", "medium"] = "highest"
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
 
 

@@ -84,6 +84,18 @@ Training saves the exact held-out test set to `test_data.pt` in the run
 directory and rejects any fresh training batch samples that match that saved
 test set.
 
+`matmul_precision` selects whether float32 matmuls may use tensor cores, via
+`torch.set_float32_matmul_precision`. It defaults to `highest`, which is true
+float32 and matches PyTorch's own default. `high` enables TF32: matmul inputs
+are rounded to a 10-bit mantissa while accumulation stays in float32, giving
+roughly 1e-3 relative precision per matmul instead of 1e-7, and is typically
+several times faster on Ampere and later. `medium` additionally permits
+bfloat16 inputs. Only matmuls are affected; the optimizer, the loss, and
+elementwise ops stay in float32. Because it is recorded in the run config, the
+precision each run used stays attached to its checkpoints. Note that it sets
+global process state, so it also applies to anything run after training in the
+same session.
+
 ## Attention architecture
 
 Set `use_attention: true` in the model config to train a causal transformer on

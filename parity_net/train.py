@@ -46,6 +46,29 @@ def resolve_device(device_name: str) -> torch.device:
     return torch.device(device_name)
 
 
+MATMUL_PRECISIONS = ("highest", "high", "medium")
+
+
+def apply_matmul_precision(precision: str) -> None:
+    """Choose whether float32 matmuls may run on tensor cores.
+
+    "highest" is true float32 and is PyTorch's default. "high" enables TF32, which
+    rounds matmul inputs to a 10-bit mantissa while still accumulating in float32;
+    on Ampere and later this is typically several times faster, at roughly 1e-3
+    relative precision per matmul instead of 1e-7. "medium" additionally allows
+    bfloat16 inputs. Only matmuls are affected - the optimizer, loss, and
+    elementwise ops stay in float32.
+
+    This sets global process state, so it also applies to anything run after
+    training in the same session.
+    """
+    if precision not in MATMUL_PRECISIONS:
+        raise ValueError(
+            f"matmul_precision must be one of {MATMUL_PRECISIONS}, got {precision!r}"
+        )
+    torch.set_float32_matmul_precision(precision)
+
+
 def resolve_dtype(dtype_name: str) -> torch.dtype:
     if dtype_name == "float32":
         return torch.float32
@@ -122,6 +145,7 @@ def train(config: ExperimentConfig) -> Path:
     task_config = config.task
     device = resolve_device(training.device)
     dtype = resolve_dtype(training.dtype)
+    apply_matmul_precision(training.matmul_precision)
     torch.manual_seed(training.seed)
     max_degree = max_target_degree_for_model(model_config)
     target_names_ = target_names(task_config.relevant_dim, task_config.exclude_targets, max_degree)

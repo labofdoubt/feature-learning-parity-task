@@ -33,6 +33,7 @@ training:
   output_dir: runs/parity
   barrier_c:
   barrier_lambda: 10.0
+  matmul_precision: highest
   optimizer:
     name: adamw
     lr: 0.001
