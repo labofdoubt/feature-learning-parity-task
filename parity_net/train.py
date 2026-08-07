@@ -293,8 +293,23 @@ def train(config: ExperimentConfig) -> Path:
             loss=f"{loss.item():.4g}",
         )
 
-        if training.log_every and step % training.log_every == 0:
-            metrics = evaluate(model, test_data.x, test_data.y, training.batch_size, target_names_)
+        should_validate = training.validate_every and step % training.validate_every == 0
+        should_checkpoint = training.checkpoint_every and step % training.checkpoint_every == 0
+        # One evaluation serves both, so coinciding schedules do not validate twice.
+        metrics = (
+            evaluate(model, test_data.x, test_data.y, training.batch_size, target_names_)
+            if should_validate or should_checkpoint
+            else None
+        )
+
+        if training.progress_every and step % training.progress_every == 0 and not should_validate:
+            # Cheap heartbeat: batch loss only, no evaluation.
+            tqdm.write(
+                f"step {step}: train_mse={mse.item():.4g} loss={loss.item():.4g} "
+                f"elapsed={time.perf_counter() - start_time:.1f}s"
+            )
+
+        if should_validate:
             elapsed_seconds = time.perf_counter() - start_time
             row = {
                 "step": step,
@@ -317,8 +332,7 @@ def train(config: ExperimentConfig) -> Path:
             tqdm.write(str(row))
             pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)
 
-        if training.checkpoint_every and step % training.checkpoint_every == 0:
-            metrics = evaluate(model, test_data.x, test_data.y, training.batch_size, target_names_)
+        if should_checkpoint:
             save_checkpoint(
                 ckpt_dir / f"step_{step:08d}.pt",
                 model=model,

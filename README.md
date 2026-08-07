@@ -71,7 +71,14 @@ weights. `hidden_weight_variance` initializes hidden weights with
 initializes readout weights with `std = sqrt(readout_weight_variance)`.
 
 `TrainingConfig` controls `num_steps`, fresh-batch size, fixed held-out test
-set size, optimizer, checkpointing, and the readout barrier parameters. The
+set size, optimizer, checkpointing, and the readout barrier parameters.
+`validate_every` runs a full test evaluation and appends a row to `metrics.csv`;
+`checkpoint_every` writes a checkpoint. When both fall on the same step the
+evaluation runs once and is shared, so coinciding schedules cost nothing extra.
+`progress_every` prints a cheap heartbeat line with the current batch loss and
+no evaluation at all; it defaults to `0`, which disables it, and it never adds a
+row to `metrics.csv`. `validate_every` was previously called `log_every`; configs
+and checkpoints written under the old name still load. The
 optimizer supports optional per-group learning rates: `lr_embedding`,
 `lr_hidden`, and `lr_readout`; any omitted value falls back to `lr`. It also
 supports optional per-group weight decays: `wd_embedding`, `wd_hidden`, and

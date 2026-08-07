@@ -50,7 +50,13 @@ def load_checkpoint(
 
     payload = torch.load(path, map_location=device)
     raw = deepcopy(payload["config"])
-    from .config import ModelConfig, OptimizerConfig, TaskConfig, TrainingConfig
+    from .config import (
+        ModelConfig,
+        OptimizerConfig,
+        TaskConfig,
+        TrainingConfig,
+        normalize_training_raw,
+    )
     from .data import target_names
 
     task_raw = raw.pop("task", None)
@@ -64,13 +70,14 @@ def load_checkpoint(
         task_config = TaskConfig(**task_raw)
         model_raw["input_dim"] = task_config.input_dim
         model_raw["relevant_dim"] = task_config.relevant_dim
-    opt_cfg = OptimizerConfig(**raw["training"].pop("optimizer"))
+    training_raw = normalize_training_raw(raw["training"])
+    opt_cfg = OptimizerConfig(**training_raw.pop("optimizer"))
     if isinstance(opt_cfg.betas, list):
         opt_cfg.betas = tuple(opt_cfg.betas)
     config = ExperimentConfig(
         model=ModelConfig(**model_raw),
         task=task_config,
-        training=TrainingConfig(optimizer=opt_cfg, **raw["training"]),
+        training=TrainingConfig(optimizer=opt_cfg, **training_raw),
     )
     target_names_ = target_names(
         config.task.relevant_dim,

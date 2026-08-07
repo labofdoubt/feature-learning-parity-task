@@ -29,7 +29,8 @@ training:
   seed: 0
   device: auto
   dtype: float32
-  log_every: 100
+  validate_every: 100
+  progress_every: 0
   checkpoint_every: 1000
   output_dir: runs/parity
   barrier_c:

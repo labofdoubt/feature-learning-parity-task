@@ -60,7 +60,8 @@ class TrainingConfig:
     seed: int = 0
     device: str = "auto"
     dtype: Literal["float32", "float64"] = "float32"
-    log_every: int = 100
+    validate_every: int = 100
+    progress_every: int = 0
     checkpoint_every: int = 1_000
     output_dir: str = "runs/parity"
     barrier_c: float | None = None
@@ -88,6 +89,19 @@ class ExperimentConfig:
         else:
             self.model.input_dim = self.task.input_dim
             self.model.relevant_dim = self.task.relevant_dim
+
+
+def normalize_training_raw(raw: dict[str, Any]) -> dict[str, Any]:
+    """Accept training sections written before `log_every` became `validate_every`.
+
+    Old run configs and saved checkpoints still carry `log_every`, so it is mapped
+    across rather than rejected.
+    """
+    raw = dict(raw)
+    if "log_every" in raw:
+        legacy = raw.pop("log_every")
+        raw.setdefault("validate_every", legacy)
+    return raw
 
 
 def to_dict(config: Any) -> dict[str, Any]:
@@ -118,13 +132,14 @@ def load_config(path: str | Path) -> ExperimentConfig:
         task = TaskConfig(**task_raw)
         model_raw["input_dim"] = task.input_dim
         model_raw["relevant_dim"] = task.relevant_dim
-    opt = OptimizerConfig(**raw["training"].pop("optimizer"))
+    training_raw = normalize_training_raw(raw["training"])
+    opt = OptimizerConfig(**training_raw.pop("optimizer"))
     if isinstance(opt.betas, list):
         opt.betas = tuple(opt.betas)
     return ExperimentConfig(
         model=ModelConfig(**model_raw),
         task=task,
-        training=TrainingConfig(optimizer=opt, **raw["training"]),
+        training=TrainingConfig(optimizer=opt, **training_raw),
     )
 
 
