@@ -141,6 +141,16 @@ def evaluate(
     return metrics
 
 
+def per_target_batch_mse(
+    pred: torch.Tensor,
+    y_batch: torch.Tensor,
+    target_names_: list[str],
+) -> dict[str, float]:
+    """MSE of the current batch split by individual parity target."""
+    values = (pred.detach() - y_batch).square().mean(dim=0)
+    return dict(zip(target_names_, values.tolist()))
+
+
 def train_set_metrics(
     model: ParityModel,
     train_data: ParityDataset | None,
@@ -303,10 +313,14 @@ def train(config: ExperimentConfig) -> Path:
         )
 
         if training.progress_every and step % training.progress_every == 0 and not should_validate:
-            # Cheap heartbeat: batch loss only, no evaluation.
+            # Cheap heartbeat: the current batch only, split by parity. No evaluation.
+            breakdown = " ".join(
+                f"{name}={value:.4g}"
+                for name, value in per_target_batch_mse(pred, y_batch, target_names_).items()
+            )
             tqdm.write(
                 f"step {step}: train_mse={mse.item():.4g} loss={loss.item():.4g} "
-                f"elapsed={time.perf_counter() - start_time:.1f}s"
+                f"elapsed={time.perf_counter() - start_time:.1f}s | {breakdown}"
             )
 
         if should_validate:

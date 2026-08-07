@@ -75,9 +75,9 @@ set size, optimizer, checkpointing, and the readout barrier parameters.
 `validate_every` runs a full test evaluation and appends a row to `metrics.csv`;
 `checkpoint_every` writes a checkpoint. When both fall on the same step the
 evaluation runs once and is shared, so coinciding schedules cost nothing extra.
-`progress_every` prints a cheap heartbeat line with the current batch loss and
-no evaluation at all; it defaults to `0`, which disables it, and it never adds a
-row to `metrics.csv`. `validate_every` was previously called `log_every`; configs
+`progress_every` prints a cheap heartbeat line with the current batch loss,
+broken down by individual parity target, and runs no evaluation at all; it
+defaults to `0`, which disables it, and it never adds a row to `metrics.csv`. `validate_every` was previously called `log_every`; configs
 and checkpoints written under the old name still load. The
 optimizer supports optional per-group learning rates: `lr_embedding`,
 `lr_hidden`, and `lr_readout`; any omitted value falls back to `lr`. It also
