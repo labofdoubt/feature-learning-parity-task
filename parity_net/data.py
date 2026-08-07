@@ -135,6 +135,58 @@ def sample_inputs(n: int, input_dim: int, device: torch.device) -> torch.Tensor:
     return bits.float().mul_(2).sub_(1)
 
 
+def inputs_from_keys(keys: torch.Tensor, input_dim: int, device: torch.device) -> torch.Tensor:
+    bit_positions = torch.arange(input_dim, device=device, dtype=torch.long)
+    bits = (keys.to(device=device, dtype=torch.long).unsqueeze(1) >> bit_positions) & 1
+    return bits.float().mul_(2).sub_(1)
+
+
+def sample_unique_inputs(n: int, input_dim: int, device: torch.device) -> torch.Tensor:
+    if input_dim > 62:
+        raise ValueError("Unique input sampling supports input_dim <= 62")
+    input_space_size = 2**input_dim
+    target_n = min(n, input_space_size)
+    if target_n < n:
+        warnings.warn(
+            f"Requested {n} unique inputs, but input_dim={input_dim} gives only "
+            f"{input_space_size} possible inputs. Truncating dataset to {target_n} "
+            "unique samples.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    if target_n == 0:
+        return torch.empty((0, input_dim), device=device)
+
+    enumerate_space_limit = 5_000_000
+    if input_space_size <= enumerate_space_limit and target_n > input_space_size // 4:
+        keys = torch.randperm(input_space_size, device=device, dtype=torch.long)[:target_n]
+        return inputs_from_keys(keys, input_dim, device)
+
+    seen = torch.empty(0, device=device, dtype=torch.long)
+    while seen.numel() < target_n:
+        remaining = target_n - seen.numel()
+        candidate_count = max(remaining * 2, 1024)
+        candidates = torch.randint(
+            0,
+            input_space_size,
+            (candidate_count,),
+            device=device,
+            dtype=torch.long,
+        )
+        candidates = torch.unique(candidates, sorted=True)
+        if seen.numel():
+            positions = torch.searchsorted(seen, candidates)
+            safe_positions = positions.clamp(max=seen.numel() - 1)
+            already_seen = (positions < seen.numel()) & (seen[safe_positions] == candidates)
+            candidates = candidates[~already_seen]
+        if candidates.numel() == 0:
+            continue
+        take = min(remaining, candidates.numel())
+        seen = torch.unique(torch.cat([seen, candidates[:take]]), sorted=True)
+
+    return inputs_from_keys(seen[:target_n], input_dim, device)
+
+
 def sample_inputs_excluding(
     n: int,
     input_dim: int,
@@ -196,7 +248,7 @@ def make_dataset(
     max_degree: int | None = None,
 ) -> ParityDataset:
     _validate_task_shape(input_dim, relevant_dim)
-    x = sample_inputs(n, input_dim, device).to(dtype=dtype)
+    x = sample_unique_inputs(n, input_dim, device).to(dtype=dtype)
     y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
     return ParityDataset(x=x, y=y)
 
