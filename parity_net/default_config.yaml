@@ -12,6 +12,10 @@ model:
   use_layerwise_readouts: false
   use_post_activation_linear: false
   bias: false
+  use_attention: false
+  num_heads: 1
+  attention_logit_scale: 1/sqrt(d)
+  autoregressive_feedback: raw
 task:
   input_dim: 32
   relevant_dim: 16

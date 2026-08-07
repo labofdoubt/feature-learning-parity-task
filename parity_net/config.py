@@ -22,6 +22,10 @@ class ModelConfig:
     use_layerwise_readouts: bool = False
     use_post_activation_linear: bool = False
     bias: bool = False
+    use_attention: bool = False
+    num_heads: int = 1
+    attention_logit_scale: Literal["1/sqrt(d)", "1/d"] = "1/sqrt(d)"
+    autoregressive_feedback: Literal["raw", "sign"] = "raw"
 
 
 @dataclass

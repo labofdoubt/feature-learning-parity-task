@@ -83,3 +83,44 @@ mean-field-scale box from `MOTIVATION.md`.
 Training saves the exact held-out test set to `test_data.pt` in the run
 directory and rejects any fresh training batch samples that match that saved
 test set.
+
+## Attention architecture
+
+Set `use_attention: true` in the model config to train a causal transformer on
+the same task instead of the residual MLP. The task becomes next-position
+prediction: the sequence is the `input_dim` input bits followed by the target
+parities in binary-tree order (all degree-2 targets, then degree-4, degree-8,
+degree-16, minus anything `exclude_targets` removes). The last input position
+predicts the first degree-2 parity, the following position predicts the second
+target, and so on, so the sequence is `input_dim + num_targets - 1` positions
+long — the final target is never fed back and needs no input position.
+
+Every position owns a learnable embedding vector, input bits and intermediate
+answer positions alike, and the `{-1,+1}` value at that position scales it. This
+is the same `W x` structure the residual net uses, extended to the answer
+positions, so no separate positional encoding is needed. Each of the `L` blocks
+is causal multi-head self-attention with a residual connection, followed by the
+same MLP block the residual net uses (also residual, with
+`use_post_activation_linear` optional). There is no layer normalization. The
+unembedding is a single position-independent `N -> 1` map applied at every
+prediction position, and the loss is MSE against the target parities.
+
+Training is teacher-forced on the true parities. Evaluation is autoregressive:
+only the input bits are given and each prediction is fed back into the next
+position. `metrics.csv` therefore carries both `test_mse` (autoregressive, the
+headline metric) and `test_mse_teacher_forced`, along with their per-degree
+breakdowns, so single-step error and compounded generation error stay
+distinguishable.
+
+Attention-specific model config:
+
+- `num_heads` (default `1`) must divide `N`.
+- `attention_logit_scale` is `1/sqrt(d)` (standard) or `1/d` (muP, which keeps
+  query-key logits `Theta(1)` as `head_dim` grows with width). Attention
+  projections are initialized with `hidden_weight_variance` and belong to the
+  `hidden` optimizer group, so the muP hidden-weight rules apply to them.
+- `autoregressive_feedback` is `raw` (feed the model's own scalar output back,
+  the default) or `sign` (feed `+/-1`, matching the teacher-forced input
+  distribution).
+
+`use_layerwise_readouts` is not supported together with `use_attention`.

@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from copy import deepcopy
 
 import torch
 
 from .config import ExperimentConfig, to_dict
-from .model import ParityResidualNet
+from .model import build_model
+
+if TYPE_CHECKING:
+    from .model import ParityResidualNet, ParityTransformer
+
+    ParityModel = ParityResidualNet | ParityTransformer
 
 
 def save_checkpoint(
     path: str | Path,
     *,
-    model: ParityResidualNet,
+    model: ParityModel,
     optimizer: torch.optim.Optimizer | None,
     epoch: int,
     step: int,
@@ -40,7 +45,7 @@ def load_checkpoint(
     device: torch.device,
     *,
     load_optimizer: bool = False,
-) -> tuple[ParityResidualNet, dict[str, Any], torch.optim.Optimizer | None]:
+) -> tuple[ParityModel, dict[str, Any], torch.optim.Optimizer | None]:
     from .train import build_optimizer, max_target_degree_for_model
 
     payload = torch.load(path, map_location=device)
@@ -73,7 +78,7 @@ def load_checkpoint(
         max_target_degree_for_model(config.model),
     )
     output_dim = len(target_names_)
-    model = ParityResidualNet(
+    model = build_model(
         config.model,
         output_dim=output_dim,
         target_names_=target_names_,

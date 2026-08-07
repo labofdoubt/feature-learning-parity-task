@@ -4,6 +4,7 @@ import argparse
 import time
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 import torch
@@ -21,7 +22,12 @@ from .data import (
     save_dataset,
     target_names,
 )
-from .model import ParityResidualNet
+from .model import build_model
+
+if TYPE_CHECKING:
+    from .model import ParityResidualNet, ParityTransformer
+
+    ParityModel = ParityResidualNet | ParityTransformer
 
 
 def max_target_degree_for_model(model_config) -> int | None:
@@ -48,7 +54,7 @@ def resolve_dtype(dtype_name: str) -> torch.dtype:
     raise ValueError("dtype must be 'float32' or 'float64'")
 
 
-def build_optimizer(model: ParityResidualNet, config: OptimizerConfig) -> torch.optim.Optimizer:
+def build_optimizer(model: ParityModel, config: OptimizerConfig) -> torch.optim.Optimizer:
     param_groups = []
     group_specs = [
         ("embedding", model.embedding.parameters(), config.lr_embedding, config.wd_embedding),
@@ -88,23 +94,39 @@ def build_optimizer(model: ParityResidualNet, config: OptimizerConfig) -> torch.
 
 @torch.no_grad()
 def evaluate(
-    model: ParityResidualNet,
+    model: ParityModel,
     x: torch.Tensor,
     y: torch.Tensor,
     batch_size: int,
     target_names_: list[str] | None = None,
 ) -> dict[str, float]:
     model.eval()
+    # Autoregressive models are scored the way they are used at test time: only the
+    # input bits are given and each prediction is fed back in. The teacher-forced
+    # numbers are reported alongside so single-step and compounded error stay
+    # distinguishable.
+    autoregressive = getattr(model, "is_autoregressive", False)
     preds = []
+    teacher_forced_preds = []
     for start in range(0, x.shape[0], batch_size):
         stop = min(start + batch_size, x.shape[0])
         preds.append(model(x[start:stop]))
+        if autoregressive:
+            teacher_forced_preds.append(model(x[start:stop], targets=y[start:stop]))
     pred = torch.cat(preds, dim=0)
     metrics = {"test_mse": F.mse_loss(pred, y).item()}
     if target_names_ is None:
         target_names_ = target_names()
-    for degree, slc in degree_slices_for_targets(target_names_).items():
+    degree_slices = degree_slices_for_targets(target_names_)
+    for degree, slc in degree_slices.items():
         metrics[f"test_mse_d{degree}"] = F.mse_loss(pred[:, slc], y[:, slc]).item()
+    if autoregressive:
+        teacher_forced = torch.cat(teacher_forced_preds, dim=0)
+        metrics["test_mse_teacher_forced"] = F.mse_loss(teacher_forced, y).item()
+        for degree, slc in degree_slices.items():
+            metrics[f"test_mse_teacher_forced_d{degree}"] = F.mse_loss(
+                teacher_forced[:, slc], y[:, slc]
+            ).item()
     return metrics
 
 
@@ -151,7 +173,7 @@ def train(config: ExperimentConfig) -> Path:
         )
         test_exclusion_keys = torch.empty(0, device=device, dtype=torch.long)
 
-    model = ParityResidualNet(
+    model = build_model(
         model_config,
         output_dim=len(target_names_),
         target_names_=target_names_,
@@ -186,7 +208,7 @@ def train(config: ExperimentConfig) -> Path:
         ).to(dtype=dtype)
 
         optimizer.zero_grad(set_to_none=True)
-        pred = model(x_batch)
+        pred = model(x_batch, targets=y_batch)
         mse = F.mse_loss(pred, y_batch)
         barrier = torch.zeros((), device=device, dtype=dtype)
         if model_config.use_readout_barrier:
