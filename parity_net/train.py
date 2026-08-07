@@ -101,32 +101,18 @@ def evaluate(
     target_names_: list[str] | None = None,
 ) -> dict[str, float]:
     model.eval()
-    # Autoregressive models are scored the way they are used at test time: only the
-    # input bits are given and each prediction is fed back in. The teacher-forced
-    # numbers are reported alongside so single-step and compounded error stay
-    # distinguishable.
-    autoregressive = getattr(model, "is_autoregressive", False)
+    # Attention models are scored the way they are used at test time: only the input
+    # bits are given, and each prediction is fed back into the next position.
     preds = []
-    teacher_forced_preds = []
     for start in range(0, x.shape[0], batch_size):
         stop = min(start + batch_size, x.shape[0])
         preds.append(model(x[start:stop]))
-        if autoregressive:
-            teacher_forced_preds.append(model(x[start:stop], targets=y[start:stop]))
     pred = torch.cat(preds, dim=0)
     metrics = {"test_mse": F.mse_loss(pred, y).item()}
     if target_names_ is None:
         target_names_ = target_names()
-    degree_slices = degree_slices_for_targets(target_names_)
-    for degree, slc in degree_slices.items():
+    for degree, slc in degree_slices_for_targets(target_names_).items():
         metrics[f"test_mse_d{degree}"] = F.mse_loss(pred[:, slc], y[:, slc]).item()
-    if autoregressive:
-        teacher_forced = torch.cat(teacher_forced_preds, dim=0)
-        metrics["test_mse_teacher_forced"] = F.mse_loss(teacher_forced, y).item()
-        for degree, slc in degree_slices.items():
-            metrics[f"test_mse_teacher_forced_d{degree}"] = F.mse_loss(
-                teacher_forced[:, slc], y[:, slc]
-            ).item()
     return metrics
 
 

@@ -107,10 +107,8 @@ prediction position, and the loss is MSE against the target parities.
 
 Training is teacher-forced on the true parities. Evaluation is autoregressive:
 only the input bits are given and each prediction is fed back into the next
-position. `metrics.csv` therefore carries both `test_mse` (autoregressive, the
-headline metric) and `test_mse_teacher_forced`, along with their per-degree
-breakdowns, so single-step error and compounded generation error stay
-distinguishable.
+position, so the `test_mse` columns in `metrics.csv` measure end-to-end
+generation error, including error compounded through the fed-back predictions.
 
 Attention-specific model config:
 

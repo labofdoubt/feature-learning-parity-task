@@ -88,10 +88,6 @@ class ResidualBlock(nn.Module):
 
 
 class ParityResidualNet(nn.Module):
-    # All targets are produced by a single forward pass, so training and evaluation
-    # use the same call. See ParityTransformer for the autoregressive counterpart.
-    is_autoregressive = False
-
     def __init__(
         self,
         config: ModelConfig,
@@ -365,8 +361,6 @@ class ParityTransformer(nn.Module):
     Training is teacher-forced (pass `targets`); evaluation without `targets`
     generates autoregressively from the input bits alone.
     """
-
-    is_autoregressive = True
 
     def __init__(
         self,
