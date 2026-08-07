@@ -261,6 +261,28 @@ class ParityResidualNet(nn.Module):
         return variances
 
 
+class LayerKVCache:
+    """Keys and values already computed for one attention layer, shape
+    (batch, heads, seq, head_dim). Used to avoid recomputing the prefix at every
+    autoregressive decoding step."""
+
+    def __init__(self) -> None:
+        self.k: torch.Tensor | None = None
+        self.v: torch.Tensor | None = None
+
+    @property
+    def length(self) -> int:
+        return 0 if self.k is None else self.k.shape[2]
+
+    def append(self, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.k is None:
+            self.k, self.v = k, v
+        else:
+            self.k = torch.cat([self.k, k], dim=2)
+            self.v = torch.cat([self.v, v], dim=2)
+        return self.k, self.v
+
+
 class CausalSelfAttention(nn.Module):
     """Standard multi-head causal self-attention, no normalization, no dropout."""
 
@@ -301,14 +323,27 @@ class CausalSelfAttention(nn.Module):
         batch, seq, _ = projected.shape
         return projected.view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, *, cache: LayerKVCache | None = None) -> torch.Tensor:
         batch, seq, width = x.shape
+        q = self._split_heads(self.q_proj(x))
+        k = self._split_heads(self.k_proj(x))
+        v = self._split_heads(self.v_proj(x))
+        is_causal = True
+        if cache is not None:
+            extending = cache.length > 0
+            k, v = cache.append(k, v)
+            if extending:
+                # Decoding one position at a time: every cached key precedes the
+                # single query, so no mask applies. (is_causal would be wrong here
+                # because it aligns the mask to the top-left of a 1 x kv_len grid.)
+                if seq != 1:
+                    raise ValueError(
+                        "KV-cached decoding appends one position at a time; "
+                        f"got {seq} positions with a cache of length {cache.length - seq}"
+                    )
+                is_causal = False
         attended = F.scaled_dot_product_attention(
-            self._split_heads(self.q_proj(x)),
-            self._split_heads(self.k_proj(x)),
-            self._split_heads(self.v_proj(x)),
-            is_causal=True,
-            scale=self.logit_scale,
+            q, k, v, is_causal=is_causal, scale=self.logit_scale
         )
         return self.out_proj(attended.transpose(1, 2).reshape(batch, seq, width))
 
@@ -341,9 +376,10 @@ class TransformerBlock(nn.Module):
         self,
         x: torch.Tensor,
         *,
+        cache: LayerKVCache | None = None,
         activation_intervention: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> torch.Tensor:
-        x = x + self.attention(x)
+        x = x + self.attention(x, cache=cache)
         return self.mlp(x, activation_intervention=activation_intervention)
 
 
@@ -412,20 +448,23 @@ class ParityTransformer(nn.Module):
         if self.readout.bias is not None:
             nn.init.zeros_(self.readout.bias)
 
-    def embed(self, values: torch.Tensor) -> torch.Tensor:
-        """(batch, seq) sequence values -> (batch, seq, N) residual stream."""
-        seq = values.shape[1]
-        if seq > self.num_positions:
+    def embed(self, values: torch.Tensor, start_position: int = 0) -> torch.Tensor:
+        """(batch, seq) sequence values -> (batch, seq, N) residual stream, taking
+        embedding vectors from `start_position` onwards."""
+        stop = start_position + values.shape[1]
+        if start_position < 0 or stop > self.num_positions:
             raise ValueError(
-                f"Sequence length {seq} exceeds the {self.num_positions} embedded positions"
+                f"Positions [{start_position}, {stop}) fall outside the "
+                f"{self.num_positions} embedded positions"
             )
-        position_embeddings = self.embedding.weight[:, :seq].transpose(0, 1)
+        position_embeddings = self.embedding.weight[:, start_position:stop].transpose(0, 1)
         return values.unsqueeze(-1) * position_embeddings.unsqueeze(0)
 
     def run_blocks(
         self,
         h: torch.Tensor,
         *,
+        caches: list[LayerKVCache] | None = None,
         intervention: tuple[int, Callable[[torch.Tensor], torch.Tensor]] | None = None,
         block_intervention: tuple[int, Callable[[torch.Tensor], torch.Tensor]] | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
@@ -436,7 +475,11 @@ class ParityTransformer(nn.Module):
             activation_intervention = None
             if block_intervention is not None and layer_idx == block_intervention[0]:
                 activation_intervention = block_intervention[1]
-            h = block(h, activation_intervention=activation_intervention)
+            h = block(
+                h,
+                cache=None if caches is None else caches[layer_idx],
+                activation_intervention=activation_intervention,
+            )
             if intervention is not None and intervention[0] == layer_idx + 1:
                 h = intervention[1](h)
             activations.append(h)
@@ -482,30 +525,54 @@ class ParityTransformer(nn.Module):
             return y, activations
         return y
 
+    def feedback_value(self, prediction: torch.Tensor) -> torch.Tensor:
+        """The value written into the next sequence position during generation."""
+        if self.config.autoregressive_feedback == "sign":
+            ones = torch.ones_like(prediction)
+            return torch.where(prediction >= 0, ones, -ones)
+        return prediction
+
     def generate(
         self,
         x: torch.Tensor,
         *,
+        use_cache: bool = True,
         intervention: tuple[int, Callable[[torch.Tensor], torch.Tensor]] | None = None,
         block_intervention: tuple[int, Callable[[torch.Tensor], torch.Tensor]] | None = None,
     ) -> torch.Tensor:
-        """Predict every target from the input bits alone, feeding each prediction back."""
-        values = x
-        predictions = []
-        for step in range(self.output_dim):
-            h, _ = self.run_blocks(
-                self.embed(values),
-                intervention=intervention,
-                block_intervention=block_intervention,
-            )
-            step_prediction = self.readout(h[:, -1, :]).squeeze(-1)
-            predictions.append(step_prediction)
-            if step + 1 < self.output_dim:
-                feedback = step_prediction
-                if self.config.autoregressive_feedback == "sign":
-                    ones = torch.ones_like(step_prediction)
-                    feedback = torch.where(step_prediction >= 0, ones, -ones)
-                values = torch.cat([values, feedback.unsqueeze(1)], dim=1)
+        """Predict every target from the input bits alone, feeding each prediction back.
+
+        With `use_cache` the input bits are run once to fill a per-layer key/value
+        cache and each later position costs a single-position forward pass, so the
+        whole generation costs about as much as one full-sequence pass. Interventions
+        force the uncached path, since an intervention may be a function of the whole
+        prefix rather than of one position at a time.
+        """
+        if intervention is not None or block_intervention is not None:
+            use_cache = False
+        if not use_cache:
+            values = x
+            predictions = []
+            for step in range(self.output_dim):
+                h, _ = self.run_blocks(
+                    self.embed(values),
+                    intervention=intervention,
+                    block_intervention=block_intervention,
+                )
+                predictions.append(self.readout(h[:, -1, :]).squeeze(-1))
+                if step + 1 < self.output_dim:
+                    values = torch.cat(
+                        [values, self.feedback_value(predictions[-1]).unsqueeze(1)], dim=1
+                    )
+            return torch.stack(predictions, dim=1)
+
+        caches = [LayerKVCache() for _ in self.blocks]
+        h, _ = self.run_blocks(self.embed(x), caches=caches)
+        predictions = [self.readout(h[:, -1, :]).squeeze(-1)]
+        for position in range(self.config.input_dim, self.num_positions):
+            feedback = self.feedback_value(predictions[-1]).unsqueeze(1)
+            h, _ = self.run_blocks(self.embed(feedback, position), caches=caches)
+            predictions.append(self.readout(h[:, -1, :]).squeeze(-1))
         return torch.stack(predictions, dim=1)
 
     def readout_barrier(self, c: float, barrier_lambda: float) -> torch.Tensor:
