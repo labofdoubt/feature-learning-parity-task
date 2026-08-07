@@ -187,6 +187,68 @@ def sample_unique_inputs(n: int, input_dim: int, device: torch.device) -> torch.
     return inputs_from_keys(seen[:target_n], input_dim, device)
 
 
+def sample_unique_inputs_excluding(
+    n: int,
+    input_dim: int,
+    device: torch.device,
+    excluded_keys: torch.Tensor,
+) -> torch.Tensor:
+    """`n` distinct inputs, none of them in `excluded_keys`.
+
+    `sample_inputs_excluding` avoids the excluded set but may repeat inputs, which is
+    fine for a fresh batch and wrong for a fixed training pool of a stated size.
+    """
+    if excluded_keys.numel() == 0:
+        return sample_unique_inputs(n, input_dim, device)
+    if input_dim > 62:
+        raise ValueError("Unique input sampling supports input_dim <= 62")
+
+    input_space_size = 2**input_dim
+    available = input_space_size - int(excluded_keys.numel())
+    target_n = min(n, available)
+    if target_n < n:
+        warnings.warn(
+            f"Requested {n} unique inputs outside the excluded set, but only "
+            f"{available} of the {input_space_size} possible inputs are available. "
+            f"Truncating to {target_n}.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    if target_n <= 0:
+        return torch.empty((0, input_dim), device=device)
+
+    enumerate_space_limit = 5_000_000
+    if input_space_size <= enumerate_space_limit:
+        keep = torch.ones(input_space_size, device=device, dtype=torch.bool)
+        keep[excluded_keys.to(device=device, dtype=torch.long)] = False
+        candidates = torch.nonzero(keep, as_tuple=False).flatten()
+        chosen = torch.randperm(candidates.numel(), device=device)[:target_n]
+        return inputs_from_keys(candidates[chosen], input_dim, device)
+
+    excluded_sorted = torch.unique(excluded_keys.to(device=device, dtype=torch.long), sorted=True)
+    seen = torch.empty(0, device=device, dtype=torch.long)
+    while seen.numel() < target_n:
+        remaining = target_n - seen.numel()
+        candidates = torch.randint(
+            0,
+            input_space_size,
+            (max(remaining * 2, 1024),),
+            device=device,
+            dtype=torch.long,
+        )
+        candidates = torch.unique(candidates, sorted=True)
+        for blocked in (excluded_sorted, seen):
+            if blocked.numel() and candidates.numel():
+                positions = torch.searchsorted(blocked, candidates)
+                safe = positions.clamp(max=blocked.numel() - 1)
+                candidates = candidates[~((positions < blocked.numel()) & (blocked[safe] == candidates))]
+        if candidates.numel() == 0:
+            continue
+        seen = torch.unique(torch.cat([seen, candidates[:remaining]]), sorted=True)
+
+    return inputs_from_keys(seen[:target_n], input_dim, device)
+
+
 def sample_inputs_excluding(
     n: int,
     input_dim: int,

@@ -84,6 +84,17 @@ Training saves the exact held-out test set to `test_data.pt` in the run
 directory and rejects any fresh training batch samples that match that saved
 test set.
 
+`train_samples` bounds the training data. Left `null` (the default), every step
+draws a fresh batch, so training never repeats an input. Set to an integer, it
+draws that many distinct inputs once, none of them in the test set, saves them to
+`train_data.pt`, and trains only on that pool for all `num_steps` — shuffled
+epochs, so each input is seen equally often. If the pool is smaller than
+`batch_size`, every step uses the whole pool and a warning says so; if the input
+space cannot supply that many inputs outside the test set, the pool is truncated
+with a warning. When a pool is in use, `metrics.csv` gains `train_set_*` columns
+holding the same metrics over the whole pool, so the gap against the `test_*`
+columns measures memorization. (`train_mse` remains the current batch's loss.)
+
 `matmul_precision` selects whether float32 matmuls may use tensor cores, via
 `torch.set_float32_matmul_precision`. It defaults to `highest`, which is true
 float32 and matches PyTorch's own default. `high` enables TF32: matmul inputs

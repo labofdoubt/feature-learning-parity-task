@@ -14,11 +14,13 @@ from tqdm.auto import tqdm
 from .checkpoint import save_checkpoint
 from .config import ExperimentConfig, OptimizerConfig, load_config, save_config, write_default_config
 from .data import (
+    ParityDataset,
     degree_slices_for_targets,
     exclusion_keys,
     labels_from_inputs,
     make_dataset,
     sample_inputs_excluding,
+    sample_unique_inputs_excluding,
     save_dataset,
     target_names,
 )
@@ -139,6 +141,20 @@ def evaluate(
     return metrics
 
 
+def train_set_metrics(
+    model: ParityModel,
+    train_data: ParityDataset | None,
+    batch_size: int,
+    target_names_: list[str],
+) -> dict[str, float]:
+    """Same metrics as `evaluate`, over the fixed training pool. Empty when training
+    draws a fresh sample every step, since then there is no fixed pool to score."""
+    if train_data is None:
+        return {}
+    metrics = evaluate(model, train_data.x, train_data.y, batch_size, target_names_)
+    return {name.replace("test_", "train_set_", 1): value for name, value in metrics.items()}
+
+
 def train(config: ExperimentConfig) -> Path:
     training = config.training
     model_config = config.model
@@ -183,6 +199,39 @@ def train(config: ExperimentConfig) -> Path:
         )
         test_exclusion_keys = torch.empty(0, device=device, dtype=torch.long)
 
+    # With train_samples set, training draws a fixed pool of that many distinct inputs
+    # once and never sees anything else; otherwise every step gets a fresh sample.
+    train_data = None
+    train_data_path = None
+    train_batch_size = training.batch_size
+    if training.train_samples is not None:
+        if training.train_samples <= 0:
+            raise ValueError("train_samples must be positive or null")
+        train_x = sample_unique_inputs_excluding(
+            training.train_samples,
+            task_config.input_dim,
+            device,
+            test_exclusion_keys,
+        ).to(dtype=dtype)
+        train_y = labels_from_inputs(
+            train_x,
+            task_config.relevant_dim,
+            task_config.exclude_targets,
+            max_degree,
+        ).to(dtype=dtype)
+        train_data = ParityDataset(x=train_x, y=train_y)
+        train_data_path = output_dir / "train_data.pt"
+        save_dataset(train_data, train_data_path)
+        train_pool_size = train_data.x.shape[0]
+        if train_pool_size < train_batch_size:
+            warnings.warn(
+                f"train_samples={train_pool_size} is smaller than batch_size="
+                f"{train_batch_size}; every step will use the whole training pool.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            train_batch_size = train_pool_size
+
     model = build_model(
         model_config,
         output_dim=len(target_names_),
@@ -194,6 +243,9 @@ def train(config: ExperimentConfig) -> Path:
         barrier_c = 7.0 / model_config.N
 
     history = []
+    # Shuffled epochs over the fixed pool, so every training input is seen equally often.
+    epoch_order = torch.empty(0, device=device, dtype=torch.long)
+    epoch_cursor = 0
     start_time = time.perf_counter()
     progress = tqdm(
         range(1, training.num_steps + 1),
@@ -204,18 +256,27 @@ def train(config: ExperimentConfig) -> Path:
     )
     for step in progress:
         model.train()
-        x_batch = sample_inputs_excluding(
-            training.batch_size,
-            task_config.input_dim,
-            device,
-            test_exclusion_keys,
-        ).to(dtype=dtype)
-        y_batch = labels_from_inputs(
-            x_batch,
-            task_config.relevant_dim,
-            task_config.exclude_targets,
-            max_degree,
-        ).to(dtype=dtype)
+        if train_data is None:
+            x_batch = sample_inputs_excluding(
+                training.batch_size,
+                task_config.input_dim,
+                device,
+                test_exclusion_keys,
+            ).to(dtype=dtype)
+            y_batch = labels_from_inputs(
+                x_batch,
+                task_config.relevant_dim,
+                task_config.exclude_targets,
+                max_degree,
+            ).to(dtype=dtype)
+        else:
+            if epoch_cursor + train_batch_size > epoch_order.numel():
+                epoch_order = torch.randperm(train_data.x.shape[0], device=device)
+                epoch_cursor = 0
+            batch_idx = epoch_order[epoch_cursor : epoch_cursor + train_batch_size]
+            epoch_cursor += train_batch_size
+            x_batch = train_data.x[batch_idx]
+            y_batch = train_data.y[batch_idx]
 
         optimizer.zero_grad(set_to_none=True)
         pred = model(x_batch, targets=y_batch)
@@ -242,6 +303,9 @@ def train(config: ExperimentConfig) -> Path:
                 "barrier": barrier.item(),
                 "loss": loss.item(),
                 **metrics,
+                # "train_mse" above is the current batch; these cover the whole fixed
+                # pool, so the gap against the test columns measures memorization.
+                **train_set_metrics(model, train_data, training.batch_size, target_names_),
             }
             history.append(row)
             progress.set_postfix(
@@ -271,6 +335,7 @@ def train(config: ExperimentConfig) -> Path:
         "step": training.num_steps,
         "elapsed_seconds": time.perf_counter() - start_time,
         **final_metrics,
+        **train_set_metrics(model, train_data, training.batch_size, target_names_),
     }
     history.append(final_row)
     pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)

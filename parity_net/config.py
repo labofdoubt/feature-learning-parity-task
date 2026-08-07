@@ -55,6 +55,7 @@ class OptimizerConfig:
 class TrainingConfig:
     num_steps: int = 10_000
     test_samples: int = 20_000
+    train_samples: int | None = None
     batch_size: int = 512
     seed: int = 0
     device: str = "auto"
