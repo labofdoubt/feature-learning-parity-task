@@ -111,9 +111,10 @@ position, so the `test_mse` columns in `metrics.csv` measure end-to-end
 generation error, including error compounded through the fed-back predictions.
 Generation uses a per-layer key/value cache, so it runs the input bits once and
 then costs one single-position forward pass per target instead of recomputing
-the whole prefix each step. Pass `use_cache=False` to `generate` for the
-recompute path; it produces the same numbers and is what interventions fall back
-to, since an intervention may be a function of the whole prefix.
+the whole prefix each step. Set `use_kv_cache: false` in the model config (or
+pass `use_cache=False` to `generate`) for the recompute path; it produces the
+same numbers and is what interventions fall back to, since an intervention may
+be a function of the whole prefix.
 
 Attention-specific model config:
 

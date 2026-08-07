@@ -16,6 +16,7 @@ model:
   num_heads: 1
   attention_logit_scale: 1/sqrt(d)
   autoregressive_feedback: raw
+  use_kv_cache: true
 task:
   input_dim: 32
   relevant_dim: 16

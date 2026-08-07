@@ -26,6 +26,7 @@ class ModelConfig:
     num_heads: int = 1
     attention_logit_scale: Literal["1/sqrt(d)", "1/d"] = "1/sqrt(d)"
     autoregressive_feedback: Literal["raw", "sign"] = "raw"
+    use_kv_cache: bool = True
 
 
 @dataclass

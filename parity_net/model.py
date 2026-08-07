@@ -536,18 +536,21 @@ class ParityTransformer(nn.Module):
         self,
         x: torch.Tensor,
         *,
-        use_cache: bool = True,
+        use_cache: bool | None = None,
         intervention: tuple[int, Callable[[torch.Tensor], torch.Tensor]] | None = None,
         block_intervention: tuple[int, Callable[[torch.Tensor], torch.Tensor]] | None = None,
     ) -> torch.Tensor:
         """Predict every target from the input bits alone, feeding each prediction back.
 
-        With `use_cache` the input bits are run once to fill a per-layer key/value
-        cache and each later position costs a single-position forward pass, so the
-        whole generation costs about as much as one full-sequence pass. Interventions
-        force the uncached path, since an intervention may be a function of the whole
-        prefix rather than of one position at a time.
+        With the key/value cache the input bits are run once and each later position
+        costs a single-position forward pass, so the whole generation costs about as
+        much as one full-sequence pass. `use_cache` defaults to `config.use_kv_cache`;
+        the uncached path recomputes the prefix at every step and produces the same
+        numbers. Interventions force the uncached path, since an intervention may be a
+        function of the whole prefix rather than of one position at a time.
         """
+        if use_cache is None:
+            use_cache = self.config.use_kv_cache
         if intervention is not None or block_intervention is not None:
             use_cache = False
         if not use_cache:
