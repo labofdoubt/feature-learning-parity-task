@@ -13,6 +13,7 @@ model:
   use_post_activation_linear: false
   bias: false
   use_attention: false
+  sequence_mixing: attention
   num_heads: 1
   attention_logit_scale: 1/sqrt(d)
   autoregressive_feedback: raw
@@ -36,6 +37,7 @@ training:
   barrier_c:
   barrier_lambda: 10.0
   matmul_precision: highest
+  teacher_forcing_ratio: 1.0
   optimizer:
     name: adamw
     lr: 0.001

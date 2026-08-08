@@ -91,6 +91,16 @@ Training saves the exact held-out test set to `test_data.pt` in the run
 directory and rejects any fresh training batch samples that match that saved
 test set.
 
+`teacher_forcing_ratio` (default `1.0`) is the probability, drawn per step, that the
+answer positions are filled with the true parities. Below `1.0` the model instead
+generates the sequence autoregressively first, under `no_grad`, and trains on that
+self-produced context; the loss targets remain the true parities either way, so this
+is scheduled sampling rather than self-distillation. `0.0` never teacher-forces,
+which removes the shortcut whereby every target is a product of two exact values
+already in the context. It applies only to the attention architecture; the residual
+MLP emits all targets in one pass and warns that the setting is ignored. Each
+non-teacher-forced step costs one extra forward pass for the rollout.
+
 `train_samples` bounds the training data. Left `null` (the default), every step
 draws a fresh batch, so training never repeats an input. Set to an integer, it
 draws that many distinct inputs once, none of them in the test set, saves them to
@@ -148,7 +158,16 @@ be a function of the whole prefix.
 
 Attention-specific model config:
 
-- `num_heads` (default `1`) must divide `N`.
+- `sequence_mixing` chooses how positions exchange information inside each block.
+  `attention` (default) is learned causal self-attention. `uniform` freezes the
+  softmax to a uniform mean over the causal prefix, keeping the V and O projections
+  so it ablates query-key selectivity specifically rather than the ability to mix at
+  all; it is the control for asking whether attention does anything for a task whose
+  operands always live at fixed positions. `none` removes the sub-layer entirely, so
+  each position sees only its own value and cannot compute a parity of others; it
+  warns on construction.
+- `num_heads` (default `1`) must divide `N`. It has no effect under `uniform` or
+  `none`.
 - `attention_logit_scale` is `1/sqrt(d)` (standard) or `1/d` (muP, which keeps
   query-key logits `Theta(1)` as `head_dim` grows with width). Attention
   projections are initialized with `hidden_weight_variance` and belong to the

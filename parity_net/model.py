@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Callable
 
 import torch
@@ -319,6 +320,9 @@ class CausalSelfAttention(nn.Module):
             if projection.bias is not None:
                 nn.init.zeros_(projection.bias)
 
+    def new_cache(self) -> LayerKVCache:
+        return LayerKVCache()
+
     def _split_heads(self, projected: torch.Tensor) -> torch.Tensor:
         batch, seq, _ = projected.shape
         return projected.view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
@@ -348,9 +352,74 @@ class CausalSelfAttention(nn.Module):
         return self.out_proj(attended.transpose(1, 2).reshape(batch, seq, width))
 
 
+class PrefixMeanCache:
+    """Running sum and count for uniform causal mixing, the analogue of a KV cache."""
+
+    def __init__(self) -> None:
+        self.total: torch.Tensor | None = None
+        self.count = 0
+
+    def append(self, v: torch.Tensor) -> torch.Tensor:
+        running = v.cumsum(dim=1)
+        if self.total is not None:
+            running = running + self.total.unsqueeze(1)
+        self.total = running[:, -1, :]
+        positions = torch.arange(
+            self.count + 1, self.count + 1 + v.shape[1], device=v.device, dtype=v.dtype
+        )
+        self.count += v.shape[1]
+        return running / positions.view(1, -1, 1)
+
+
+class UniformCausalMixing(nn.Module):
+    """Attention with the softmax frozen to uniform: every position averages the value
+    vectors of the whole causal prefix. Keeps the V and O projections so it ablates the
+    query-key selectivity specifically, not the ability to mix across positions."""
+
+    def __init__(self, width: int, variance: float, bias: bool) -> None:
+        super().__init__()
+        self.v_proj = nn.Linear(width, width, bias=bias)
+        self.out_proj = nn.Linear(width, width, bias=bias)
+        for projection in (self.v_proj, self.out_proj):
+            nn.init.normal_(projection.weight, mean=0.0, std=math.sqrt(variance))
+            if projection.bias is not None:
+                nn.init.zeros_(projection.bias)
+
+    def new_cache(self) -> PrefixMeanCache:
+        return PrefixMeanCache()
+
+    def forward(self, x: torch.Tensor, *, cache: PrefixMeanCache | None = None) -> torch.Tensor:
+        v = self.v_proj(x)
+        if cache is None:
+            positions = torch.arange(1, x.shape[1] + 1, device=x.device, dtype=v.dtype)
+            pooled = v.cumsum(dim=1) / positions.view(1, -1, 1)
+        else:
+            pooled = cache.append(v)
+        return self.out_proj(pooled)
+
+
+def build_sequence_mixing(
+    sequence_mixing: str,
+    width: int,
+    num_heads: int,
+    variance: float,
+    bias: bool,
+    attention_logit_scale: str,
+) -> nn.Module | None:
+    if sequence_mixing == "attention":
+        return CausalSelfAttention(width, num_heads, variance, bias, attention_logit_scale)
+    if sequence_mixing == "uniform":
+        return UniformCausalMixing(width, variance, bias)
+    if sequence_mixing == "none":
+        return None
+    raise ValueError(
+        f'sequence_mixing must be "attention", "uniform", or "none", got {sequence_mixing!r}'
+    )
+
+
 class TransformerBlock(nn.Module):
-    """Causal attention with a residual connection, then the same MLP block the
-    residual net uses (which carries its own residual connection)."""
+    """A sequence-mixing sub-layer with a residual connection, then the same MLP block
+    the residual net uses (which carries its own residual connection)."""
 
     def __init__(
         self,
@@ -361,25 +430,31 @@ class TransformerBlock(nn.Module):
         bias: bool,
         use_post_activation_linear: bool,
         attention_logit_scale: str,
+        sequence_mixing: str = "attention",
     ) -> None:
         super().__init__()
-        self.attention = CausalSelfAttention(
-            width,
-            num_heads,
-            variance,
-            bias,
-            attention_logit_scale,
+        self.mixing = build_sequence_mixing(
+            sequence_mixing, width, num_heads, variance, bias, attention_logit_scale
         )
         self.mlp = ResidualBlock(width, activation, variance, bias, use_post_activation_linear)
+
+    @property
+    def attention(self) -> nn.Module | None:
+        """Alias kept so analysis code can keep reaching for block.attention."""
+        return self.mixing
+
+    def new_cache(self):
+        return None if self.mixing is None else self.mixing.new_cache()
 
     def forward(
         self,
         x: torch.Tensor,
         *,
-        cache: LayerKVCache | None = None,
+        cache=None,
         activation_intervention: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> torch.Tensor:
-        x = x + self.attention(x, cache=cache)
+        if self.mixing is not None:
+            x = x + self.mixing(x, cache=cache)
         return self.mlp(x, activation_intervention=activation_intervention)
 
 
@@ -409,6 +484,14 @@ class ParityTransformer(nn.Module):
             raise ValueError("use_layerwise_readouts is not supported with use_attention=True")
         if output_dim < 1:
             raise ValueError("output_dim must be positive")
+        if config.sequence_mixing == "none" and output_dim > 1:
+            warnings.warn(
+                'sequence_mixing="none" removes every path between positions, so each '
+                "position sees only its own value and cannot compute a parity of others. "
+                'Use "uniform" to keep the mixing but drop the query-key selectivity.',
+                RuntimeWarning,
+                stacklevel=2,
+            )
         self.config = config
         self.output_dim = output_dim
         self.target_names = target_names_
@@ -438,6 +521,7 @@ class ParityTransformer(nn.Module):
                     config.bias,
                     config.use_post_activation_linear,
                     config.attention_logit_scale,
+                    config.sequence_mixing,
                 )
                 for _ in range(config.L)
             ]
@@ -569,7 +653,7 @@ class ParityTransformer(nn.Module):
                     )
             return torch.stack(predictions, dim=1)
 
-        caches = [LayerKVCache() for _ in self.blocks]
+        caches = [block.new_cache() for block in self.blocks]
         h, _ = self.run_blocks(self.embed(x), caches=caches)
         predictions = [self.readout(h[:, -1, :]).squeeze(-1)]
         for position in range(self.config.input_dim, self.num_positions):
@@ -599,11 +683,11 @@ class ParityTransformer(nn.Module):
             "embedding.weight": self.embedding.weight.detach().float().var(unbiased=False).item()
         }
         for i, block in enumerate(self.blocks):
-            for name in ("q_proj", "k_proj", "v_proj", "out_proj"):
-                weight = getattr(block.attention, name).weight
-                variances[f"blocks.{i}.attention.{name}.weight"] = (
-                    weight.detach().float().var(unbiased=False).item()
-                )
+            if block.mixing is not None:
+                for name, parameter in block.mixing.named_parameters():
+                    variances[f"blocks.{i}.mixing.{name}"] = (
+                        parameter.detach().float().var(unbiased=False).item()
+                    )
             variances[f"blocks.{i}.mlp.linear.weight"] = (
                 block.mlp.linear.weight.detach().float().var(unbiased=False).item()
             )

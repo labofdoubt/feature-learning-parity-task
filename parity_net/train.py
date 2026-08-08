@@ -248,6 +248,16 @@ def train(config: ExperimentConfig) -> Path:
         target_names_=target_names_,
     ).to(device=device, dtype=dtype)
     optimizer = build_optimizer(model, training.optimizer)
+    if not 0.0 <= training.teacher_forcing_ratio <= 1.0:
+        raise ValueError("teacher_forcing_ratio must be in [0, 1]")
+    uses_scheduled_sampling = training.teacher_forcing_ratio < 1.0 and hasattr(model, "generate")
+    if training.teacher_forcing_ratio < 1.0 and not uses_scheduled_sampling:
+        warnings.warn(
+            "teacher_forcing_ratio only applies to autoregressive models; the residual "
+            "MLP emits every target in one pass, so it is ignored here.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     barrier_c = training.barrier_c
     if barrier_c is None:
         barrier_c = 7.0 / model_config.N
@@ -288,8 +298,18 @@ def train(config: ExperimentConfig) -> Path:
             x_batch = train_data.x[batch_idx]
             y_batch = train_data.y[batch_idx]
 
+        # Teacher forcing puts the true parities in the answer positions. Below the
+        # ratio, the model instead rolls out its own predictions first and trains on
+        # that context; the loss targets stay the true parities either way, so this is
+        # scheduled sampling, not self-distillation. The rollout is detached, so no
+        # gradient flows back through it.
+        context_targets = y_batch
+        if uses_scheduled_sampling and float(torch.rand(())) >= training.teacher_forcing_ratio:
+            with torch.no_grad():
+                context_targets = model.feedback_value(model.generate(x_batch))
+
         optimizer.zero_grad(set_to_none=True)
-        pred = model(x_batch, targets=y_batch)
+        pred = model(x_batch, targets=context_targets)
         mse = F.mse_loss(pred, y_batch)
         barrier = torch.zeros((), device=device, dtype=dtype)
         if model_config.use_readout_barrier:

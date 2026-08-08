@@ -23,6 +23,7 @@ class ModelConfig:
     use_post_activation_linear: bool = False
     bias: bool = False
     use_attention: bool = False
+    sequence_mixing: Literal["attention", "uniform", "none"] = "attention"
     num_heads: int = 1
     attention_logit_scale: Literal["1/sqrt(d)", "1/d"] = "1/sqrt(d)"
     autoregressive_feedback: Literal["raw", "sign"] = "raw"
@@ -67,6 +68,7 @@ class TrainingConfig:
     barrier_c: float | None = None
     barrier_lambda: float = 10.0
     matmul_precision: Literal["highest", "high", "medium"] = "highest"
+    teacher_forcing_ratio: float = 1.0
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
 
 
