@@ -21,6 +21,8 @@ class ModelConfig:
     readout_weight_variance: float = 1e-4
     use_layerwise_readouts: bool = False
     use_post_activation_linear: bool = False
+    # None means the post-activation linear reuses hidden_weight_variance.
+    post_activation_linear_variance: float | None = None
     bias: bool = False
     use_attention: bool = False
     sequence_mixing: Literal["attention", "uniform", "uniform_vo", "none"] = "attention"

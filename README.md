@@ -69,6 +69,13 @@ unscaled QR embedding. Set `freeze_embedding` to `false` to train the embedding
 weights. `hidden_weight_variance` initializes hidden weights with
 `std = sqrt(hidden_weight_variance)`, and `readout_weight_variance`
 initializes readout weights with `std = sqrt(readout_weight_variance)`.
+`post_activation_linear_variance` overrides the initialization variance of the
+post-activation linear `W` in `x + W phi(Vx)`; leave it `null` and that layer
+reuses `hidden_weight_variance`. Only `W` is affected — the pre-activation `V`
+always follows `hidden_weight_variance` — and the field is ignored entirely when
+`use_post_activation_linear` is `false`. It applies to both architectures, since
+the attention model's blocks reuse the same MLP. Note that `W` is a hidden weight
+for muP purposes, so a width-independent value here breaks the `1/fan_in` rule.
 
 `TrainingConfig` controls `num_steps`, fresh-batch size, fixed held-out test
 set size, optimizer, checkpointing, and the readout barrier parameters.

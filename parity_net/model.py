@@ -54,6 +54,7 @@ class ResidualBlock(nn.Module):
         variance: float,
         bias: bool,
         use_post_activation_linear: bool,
+        post_activation_linear_variance: float | None = None,
     ) -> None:
         super().__init__()
         self.linear = nn.Linear(width, width, bias=bias)
@@ -61,6 +62,10 @@ class ResidualBlock(nn.Module):
         self.post_activation_linear = (
             nn.Linear(width, width, bias=bias) if use_post_activation_linear else None
         )
+        # None means the post-activation linear shares the hidden-weight variance.
+        post_variance = variance if post_activation_linear_variance is None else post_activation_linear_variance
+        if post_variance < 0:
+            raise ValueError("post_activation_linear_variance must be non-negative")
 
         nn.init.normal_(self.linear.weight, mean=0.0, std=math.sqrt(variance))
         if self.linear.bias is not None:
@@ -69,7 +74,7 @@ class ResidualBlock(nn.Module):
             nn.init.normal_(
                 self.post_activation_linear.weight,
                 mean=0.0,
-                std=math.sqrt(variance),
+                std=math.sqrt(post_variance),
             )
             if self.post_activation_linear.bias is not None:
                 nn.init.zeros_(self.post_activation_linear.bias)
@@ -120,6 +125,7 @@ class ParityResidualNet(nn.Module):
                     config.hidden_weight_variance,
                     config.bias,
                     config.use_post_activation_linear,
+                    config.post_activation_linear_variance,
                 )
                 for _ in range(config.L)
             ]
@@ -449,12 +455,20 @@ class TransformerBlock(nn.Module):
         use_post_activation_linear: bool,
         attention_logit_scale: str,
         sequence_mixing: str = "attention",
+        post_activation_linear_variance: float | None = None,
     ) -> None:
         super().__init__()
         self.mixing = build_sequence_mixing(
             sequence_mixing, width, num_heads, variance, bias, attention_logit_scale
         )
-        self.mlp = ResidualBlock(width, activation, variance, bias, use_post_activation_linear)
+        self.mlp = ResidualBlock(
+            width,
+            activation,
+            variance,
+            bias,
+            use_post_activation_linear,
+            post_activation_linear_variance,
+        )
 
     @property
     def attention(self) -> nn.Module | None:
@@ -540,6 +554,7 @@ class ParityTransformer(nn.Module):
                     config.use_post_activation_linear,
                     config.attention_logit_scale,
                     config.sequence_mixing,
+                    config.post_activation_linear_variance,
                 )
                 for _ in range(config.L)
             ]
