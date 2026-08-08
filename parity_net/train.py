@@ -262,6 +262,28 @@ def train(config: ExperimentConfig) -> Path:
     if barrier_c is None:
         barrier_c = 7.0 / model_config.N
 
+    # Curriculum: start with only the lowest-degree targets in the loss and unlock the
+    # next degree once the current highest one is trained. Targets are ordered by
+    # degree, so the active set is always a prefix of the columns.
+    curriculum_slices = degree_slices_for_targets(target_names_)
+    curriculum_degrees = sorted(curriculum_slices)
+    active_degree_count = 1 if training.curriculum else len(curriculum_degrees)
+    if training.curriculum:
+        if training.curriculum_mse_threshold <= 0:
+            raise ValueError("curriculum_mse_threshold must be positive")
+        if len(curriculum_degrees) < 2:
+            warnings.warn(
+                f"curriculum is on but the task has a single degree ({curriculum_degrees}), "
+                "so nothing is ever gated.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        print(
+            f"Curriculum on: degrees {curriculum_degrees} unlock in order once the "
+            f"current top degree's train MSE drops below {training.curriculum_mse_threshold}. "
+            f"Starting with d{curriculum_degrees[0]} only."
+        )
+
     history = []
     # Shuffled epochs over the fixed pool, so every training input is seen equally often.
     epoch_order = torch.empty(0, device=device, dtype=torch.long)
@@ -310,13 +332,30 @@ def train(config: ExperimentConfig) -> Path:
 
         optimizer.zero_grad(set_to_none=True)
         pred = model(x_batch, targets=context_targets)
-        mse = F.mse_loss(pred, y_batch)
+        active_stop = curriculum_slices[curriculum_degrees[active_degree_count - 1]].stop
+        mse = F.mse_loss(pred[:, :active_stop], y_batch[:, :active_stop])
         barrier = torch.zeros((), device=device, dtype=dtype)
         if model_config.use_readout_barrier:
             barrier = model.readout_barrier(barrier_c, training.barrier_lambda)
         loss = mse + barrier
         loss.backward()
         optimizer.step()
+
+        if training.curriculum and active_degree_count < len(curriculum_degrees):
+            top_degree = curriculum_degrees[active_degree_count - 1]
+            with torch.no_grad():
+                top_mse = F.mse_loss(
+                    pred[:, curriculum_slices[top_degree]],
+                    y_batch[:, curriculum_slices[top_degree]],
+                ).item()
+            if top_mse < training.curriculum_mse_threshold:
+                active_degree_count += 1
+                tqdm.write(
+                    f"step {step}: d{top_degree} train MSE {top_mse:.4g} < "
+                    f"{training.curriculum_mse_threshold} -> unlocking "
+                    f"d{curriculum_degrees[active_degree_count - 1]}"
+                )
+
         progress.set_postfix(
             train_mse=f"{mse.item():.4g}",
             barrier=f"{barrier.item():.4g}",
@@ -348,7 +387,10 @@ def train(config: ExperimentConfig) -> Path:
             row = {
                 "step": step,
                 "elapsed_seconds": elapsed_seconds,
+                # train_mse is the loss actually optimized, so under a curriculum it
+                # covers only the unlocked degrees.
                 "train_mse": mse.item(),
+                "curriculum_max_degree": curriculum_degrees[active_degree_count - 1],
                 "barrier": barrier.item(),
                 "loss": loss.item(),
                 **metrics,

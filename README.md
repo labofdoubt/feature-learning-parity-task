@@ -101,6 +101,19 @@ already in the context. It applies only to the attention architecture; the resid
 MLP emits all targets in one pass and warns that the setting is ignored. Each
 non-teacher-forced step costs one extra forward pass for the rollout.
 
+`curriculum` (default `false`) gates the loss by target degree. With it on, only the
+lowest-degree targets are in the loss at first; the next degree unlocks once the
+current highest one's training MSE on the batch falls below
+`curriculum_mse_threshold` (default `0.01`), and unlocks are permanent. So degree-4
+targets start training only after degree-2 is below the threshold, then degree-8
+after degree-4. Because targets are ordered by degree, the active set is always a
+prefix of the columns, and locked degrees contribute no gradient at all - with
+`use_layerwise_readouts`, their readouts stay at initialization until unlocked. Under
+a curriculum `train_mse` in `metrics.csv` is the loss actually optimized, i.e. the
+unlocked degrees only, and a `curriculum_max_degree` column records which those are;
+the `test_*` columns always cover every target. The unlock test uses a single batch,
+so a lucky batch can unlock slightly early.
+
 `train_samples` bounds the training data. Left `null` (the default), every step
 draws a fresh batch, so training never repeats an input. Set to an integer, it
 draws that many distinct inputs once, none of them in the test set, saves them to

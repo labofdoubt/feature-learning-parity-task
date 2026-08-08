@@ -69,6 +69,8 @@ class TrainingConfig:
     barrier_lambda: float = 10.0
     matmul_precision: Literal["highest", "high", "medium"] = "highest"
     teacher_forcing_ratio: float = 1.0
+    curriculum: bool = False
+    curriculum_mse_threshold: float = 0.01
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
 
 

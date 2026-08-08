@@ -38,6 +38,8 @@ training:
   barrier_lambda: 10.0
   matmul_precision: highest
   teacher_forcing_ratio: 1.0
+  curriculum: false
+  curriculum_mse_threshold: 0.01
   optimizer:
     name: adamw
     lr: 0.001
