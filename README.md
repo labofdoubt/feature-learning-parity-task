@@ -58,8 +58,12 @@ exact names such as `["d4_2"]`. For backward compatibility, old configs with
 `ModelConfig` controls the network shape: width `N`, depth
 `L`, readout barrier toggle, embedding scale, residual-block form,
 hidden-layer initialization variance, and readout initialization variance.
-Supported activations are `relu`, `gelu`, `tanh`, `silu`, and `half-tanh`;
-`half-tanh` is `relu(tanh(x))`.
+Supported activations are `relu`, `gelu`, `tanh`, `silu`, `half-tanh`, and
+`square`; `half-tanh` is `relu(tanh(x))` and `square` is `x^2`. `square` is the
+only unbounded one, which makes it prone to diverging at learning rates the
+others tolerate — lower `lr` or `embedding_weight_variance` if it produces NaNs.
+It is a natural fit for this task because a product of two bits is exactly
+representable by one layer, via `ab = ((a+b)^2 - (a-b)^2) / 4`.
 Set `use_post_activation_linear` to `true` to use residual blocks of the form
 `x + W phi(Vx)`; otherwise blocks use `x + phi(Vx)`.
 The initialization variance fields are literal per-entry variances:

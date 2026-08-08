@@ -16,6 +16,14 @@ class HalfTanh(nn.Module):
         return torch.relu(torch.tanh(x))
 
 
+class Square(nn.Module):
+    """phi(x) = x^2. Unlike the others this is unbounded, but it makes a product of two
+    bits exactly representable by one layer, via ab = ((a+b)^2 - (a-b)^2) / 4."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * x
+
+
 def activation_from_name(name: str) -> nn.Module:
     if name == "relu":
         return nn.ReLU()
@@ -27,6 +35,8 @@ def activation_from_name(name: str) -> nn.Module:
         return nn.SiLU()
     if name == "half-tanh":
         return HalfTanh()
+    if name == "square":
+        return Square()
     raise ValueError(f"Unknown activation: {name}")
 
 
