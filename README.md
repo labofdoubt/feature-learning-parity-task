@@ -64,6 +64,12 @@ only unbounded one, which makes it prone to diverging at learning rates the
 others tolerate — lower `lr` or `embedding_weight_variance` if it produces NaNs.
 It is a natural fit for this task because a product of two bits is exactly
 representable by one layer, via `ab = ((a+b)^2 - (a-b)^2) / 4`.
+`activation_scale` multiplies the activation output by a fixed constant `c`, so
+the block computes `x + W (c phi(Vx))`. It is not a learned parameter and adds
+nothing to the state dict, so checkpoints load across different values. At the
+default `1.0` the bare activation module is used and the module tree is
+identical to before. It applies to whichever activation is selected, not only
+`half-tanh`.
 Set `use_post_activation_linear` to `true` to use residual blocks of the form
 `x + W phi(Vx)`; otherwise blocks use `x + phi(Vx)`.
 The initialization variance fields are literal per-entry variances:

@@ -4,6 +4,7 @@ model:
   N: 1024
   L: 4
   activation: silu
+  activation_scale: 1.0
   use_readout_barrier: true
   embedding_weight_variance:
   freeze_embedding: true

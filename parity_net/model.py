@@ -24,20 +24,39 @@ class Square(nn.Module):
         return x * x
 
 
-def activation_from_name(name: str) -> nn.Module:
+class ScaledActivation(nn.Module):
+    """phi(x) -> c * phi(x) with c a fixed constant, not a learnable parameter."""
+
+    def __init__(self, activation: nn.Module, scale: float) -> None:
+        super().__init__()
+        self.activation = activation
+        self.scale = float(scale)
+
+    def extra_repr(self) -> str:
+        return f"scale={self.scale}"
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.scale * self.activation(x)
+
+
+def activation_from_name(name: str, scale: float = 1.0) -> nn.Module:
+    """Build an activation, optionally wrapped so it computes `scale * phi(x)`."""
     if name == "relu":
-        return nn.ReLU()
-    if name == "gelu":
-        return nn.GELU()
-    if name == "tanh":
-        return nn.Tanh()
-    if name == "silu":
-        return nn.SiLU()
-    if name == "half-tanh":
-        return HalfTanh()
-    if name == "square":
-        return Square()
-    raise ValueError(f"Unknown activation: {name}")
+        base: nn.Module = nn.ReLU()
+    elif name == "gelu":
+        base = nn.GELU()
+    elif name == "tanh":
+        base = nn.Tanh()
+    elif name == "silu":
+        base = nn.SiLU()
+    elif name == "half-tanh":
+        base = HalfTanh()
+    elif name == "square":
+        base = Square()
+    else:
+        raise ValueError(f"Unknown activation: {name}")
+    # scale == 1 returns the bare module, so the module tree is unchanged by default.
+    return base if scale == 1.0 else ScaledActivation(base, scale)
 
 
 def orthonormal_embedding(input_dim: int, N: int) -> torch.Tensor:
@@ -65,10 +84,11 @@ class ResidualBlock(nn.Module):
         bias: bool,
         use_post_activation_linear: bool,
         post_activation_linear_variance: float | None = None,
+        activation_scale: float = 1.0,
     ) -> None:
         super().__init__()
         self.linear = nn.Linear(width, width, bias=bias)
-        self.activation = activation_from_name(activation)
+        self.activation = activation_from_name(activation, activation_scale)
         self.post_activation_linear = (
             nn.Linear(width, width, bias=bias) if use_post_activation_linear else None
         )
@@ -136,6 +156,7 @@ class ParityResidualNet(nn.Module):
                     config.bias,
                     config.use_post_activation_linear,
                     config.post_activation_linear_variance,
+                    config.activation_scale,
                 )
                 for _ in range(config.L)
             ]
@@ -466,6 +487,7 @@ class TransformerBlock(nn.Module):
         attention_logit_scale: str,
         sequence_mixing: str = "attention",
         post_activation_linear_variance: float | None = None,
+        activation_scale: float = 1.0,
     ) -> None:
         super().__init__()
         self.mixing = build_sequence_mixing(
@@ -478,6 +500,7 @@ class TransformerBlock(nn.Module):
             bias,
             use_post_activation_linear,
             post_activation_linear_variance,
+            activation_scale,
         )
 
     @property
@@ -565,6 +588,7 @@ class ParityTransformer(nn.Module):
                     config.attention_logit_scale,
                     config.sequence_mixing,
                     config.post_activation_linear_variance,
+                    config.activation_scale,
                 )
                 for _ in range(config.L)
             ]

@@ -14,6 +14,8 @@ class ModelConfig:
     N: int = 1024
     L: int = 4
     activation: Literal["relu", "gelu", "tanh", "silu", "half-tanh", "square"] = "silu"
+    # Fixed, non-learnable multiplier c on the activation: phi(x) -> c * phi(x).
+    activation_scale: float = 1.0
     use_readout_barrier: bool = True
     embedding_weight_variance: float | None = None
     freeze_embedding: bool = True
