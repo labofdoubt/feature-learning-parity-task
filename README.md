@@ -159,15 +159,16 @@ be a function of the whole prefix.
 Attention-specific model config:
 
 - `sequence_mixing` chooses how positions exchange information inside each block.
-  `attention` (default) is learned causal self-attention. `uniform` freezes the
-  softmax to a uniform mean over the causal prefix, keeping the V and O projections
-  so it ablates query-key selectivity specifically rather than the ability to mix at
-  all; it is the control for asking whether attention does anything for a task whose
-  operands always live at fixed positions. `none` removes the sub-layer entirely, so
-  each position sees only its own value and cannot compute a parity of others; it
-  warns on construction.
-- `num_heads` (default `1`) must divide `N`. It has no effect under `uniform` or
-  `none`.
+  `attention` (default) is learned causal self-attention. `uniform` is
+  parameter-free: each position simply adds the mean of the residual stream over its
+  causal prefix, with no Q, K, V or O at all. `uniform_vo` keeps the V and O
+  projections and takes the uniform prefix mean of the value vectors, so it ablates
+  query-key selectivity alone. Both uniform modes are controls for a task whose
+  operands always live at fixed, input-independent positions; because the position
+  embeddings are orthogonal, a uniform sum still carries every earlier value. `none`
+  removes the sub-layer entirely, so each position sees only its own value and cannot
+  compute a parity of others; it warns on construction.
+- `num_heads` (default `1`) must divide `N`. It has no effect outside `attention`.
 - `attention_logit_scale` is `1/sqrt(d)` (standard) or `1/d` (muP, which keeps
   query-key logits `Theta(1)` as `head_dim` grows with width). Attention
   projections are initialized with `hidden_weight_variance` and belong to the

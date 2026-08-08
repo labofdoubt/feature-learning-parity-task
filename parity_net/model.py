@@ -371,6 +371,21 @@ class PrefixMeanCache:
         return running / positions.view(1, -1, 1)
 
 
+class UniformCausalMean(nn.Module):
+    """Parameter-free mixing: every position adds the plain mean of the residual stream
+    over its causal prefix. No V, no O, nothing learned - just the uniform sum of the
+    embeddings seen so far."""
+
+    def new_cache(self) -> PrefixMeanCache:
+        return PrefixMeanCache()
+
+    def forward(self, x: torch.Tensor, *, cache: PrefixMeanCache | None = None) -> torch.Tensor:
+        if cache is None:
+            positions = torch.arange(1, x.shape[1] + 1, device=x.device, dtype=x.dtype)
+            return x.cumsum(dim=1) / positions.view(1, -1, 1)
+        return cache.append(x)
+
+
 class UniformCausalMixing(nn.Module):
     """Attention with the softmax frozen to uniform: every position averages the value
     vectors of the whole causal prefix. Keeps the V and O projections so it ablates the
@@ -409,11 +424,14 @@ def build_sequence_mixing(
     if sequence_mixing == "attention":
         return CausalSelfAttention(width, num_heads, variance, bias, attention_logit_scale)
     if sequence_mixing == "uniform":
+        return UniformCausalMean()
+    if sequence_mixing == "uniform_vo":
         return UniformCausalMixing(width, variance, bias)
     if sequence_mixing == "none":
         return None
     raise ValueError(
-        f'sequence_mixing must be "attention", "uniform", or "none", got {sequence_mixing!r}'
+        'sequence_mixing must be "attention", "uniform", "uniform_vo", or "none", '
+        f"got {sequence_mixing!r}"
     )
 
 

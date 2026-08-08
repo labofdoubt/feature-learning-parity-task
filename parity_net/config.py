@@ -23,7 +23,7 @@ class ModelConfig:
     use_post_activation_linear: bool = False
     bias: bool = False
     use_attention: bool = False
-    sequence_mixing: Literal["attention", "uniform", "none"] = "attention"
+    sequence_mixing: Literal["attention", "uniform", "uniform_vo", "none"] = "attention"
     num_heads: int = 1
     attention_logit_scale: Literal["1/sqrt(d)", "1/d"] = "1/sqrt(d)"
     autoregressive_feedback: Literal["raw", "sign"] = "raw"
