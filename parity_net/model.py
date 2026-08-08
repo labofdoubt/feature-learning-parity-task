@@ -85,8 +85,10 @@ class ResidualBlock(nn.Module):
         use_post_activation_linear: bool,
         post_activation_linear_variance: float | None = None,
         activation_scale: float = 1.0,
+        use_skip_connection: bool = True,
     ) -> None:
         super().__init__()
+        self.use_skip_connection = use_skip_connection
         self.linear = nn.Linear(width, width, bias=bias)
         self.activation = activation_from_name(activation, activation_scale)
         self.post_activation_linear = (
@@ -120,7 +122,8 @@ class ResidualBlock(nn.Module):
             update = activation_intervention(update)
         if self.post_activation_linear is not None:
             update = self.post_activation_linear(update)
-        return x + update
+        # Without the skip connection the block is a plain MLP layer, not a residual one.
+        return x + update if self.use_skip_connection else update
 
 
 class ParityResidualNet(nn.Module):
@@ -157,6 +160,7 @@ class ParityResidualNet(nn.Module):
                     config.use_post_activation_linear,
                     config.post_activation_linear_variance,
                     config.activation_scale,
+                    config.use_skip_connections,
                 )
                 for _ in range(config.L)
             ]
@@ -488,8 +492,10 @@ class TransformerBlock(nn.Module):
         sequence_mixing: str = "attention",
         post_activation_linear_variance: float | None = None,
         activation_scale: float = 1.0,
+        use_skip_connections: bool = True,
     ) -> None:
         super().__init__()
+        self.use_skip_connections = use_skip_connections
         self.mixing = build_sequence_mixing(
             sequence_mixing, width, num_heads, variance, bias, attention_logit_scale
         )
@@ -501,6 +507,7 @@ class TransformerBlock(nn.Module):
             use_post_activation_linear,
             post_activation_linear_variance,
             activation_scale,
+            use_skip_connections,
         )
 
     @property
@@ -519,7 +526,8 @@ class TransformerBlock(nn.Module):
         activation_intervention: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> torch.Tensor:
         if self.mixing is not None:
-            x = x + self.mixing(x, cache=cache)
+            mixed = self.mixing(x, cache=cache)
+            x = x + mixed if self.use_skip_connections else mixed
         return self.mlp(x, activation_intervention=activation_intervention)
 
 
@@ -589,6 +597,7 @@ class ParityTransformer(nn.Module):
                     config.sequence_mixing,
                     config.post_activation_linear_variance,
                     config.activation_scale,
+                    config.use_skip_connections,
                 )
                 for _ in range(config.L)
             ]

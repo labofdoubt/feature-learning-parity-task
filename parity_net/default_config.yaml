@@ -12,6 +12,7 @@ model:
   readout_weight_variance: 0.0001
   use_layerwise_readouts: false
   use_post_activation_linear: false
+  use_skip_connections: true
   post_activation_linear_variance:
   bias: false
   use_attention: false

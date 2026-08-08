@@ -72,6 +72,12 @@ identical to before. It applies to whichever activation is selected, not only
 `half-tanh`.
 Set `use_post_activation_linear` to `true` to use residual blocks of the form
 `x + W phi(Vx)`; otherwise blocks use `x + phi(Vx)`.
+Set `use_skip_connections` to `false` to drop every skip connection, so a block
+computes `W phi(Vx)` rather than `x + W phi(Vx)` and the stack becomes a plain
+deep MLP. Under the attention architecture it removes the residual around the
+sequence-mixing sub-layer as well, leaving `mlp(mixing(x))`. Note this also
+removes the only path that carries the input forward when a block's weights are
+small, so deep stacks are much harder to train without it.
 The initialization variance fields are literal per-entry variances:
 `embedding_weight_variance` rescales the frozen orthonormal embedding to have
 approximately that per-entry variance; omit it or set it to `null` to keep the

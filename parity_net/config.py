@@ -23,6 +23,8 @@ class ModelConfig:
     readout_weight_variance: float = 1e-4
     use_layerwise_readouts: bool = False
     use_post_activation_linear: bool = False
+    # False removes every skip connection, turning the stack into a plain deep MLP.
+    use_skip_connections: bool = True
     # None means the post-activation linear reuses hidden_weight_variance.
     post_activation_linear_variance: float | None = None
     bias: bool = False
