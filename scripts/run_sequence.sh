@@ -33,3 +33,7 @@ mkdir -p "$NEXT_DIR"
 echo "[seq] Starting next training: $NEXT_CONFIG -> $NEXT_DIR"
 python3 -m parity_net.train --config "$NEXT_CONFIG" 2>&1 | tee "$NEXT_DIR/train.log"
 echo "[seq] Next training done: $(date)"
+
+echo "[seq] Running analysis on $NEXT_DIR ..."
+bash scripts/run_analysis.sh "$NEXT_DIR"
+echo "[seq] All done: $(date)"
