@@ -24,12 +24,12 @@ echo "============================================================"
 
 echo ""
 echo "── 1/6  Train/test curves ──────────────────────────────────"
-python scripts/analyze_curves.py \
+python3 scripts/analyze_curves.py \
     --run-dir "$RUN_DIR"
 
 echo ""
 echo "── 2/6  PCA interventions ──────────────────────────────────"
-python scripts/analyze_pca.py \
+python3 scripts/analyze_pca.py \
     --run-dir "$RUN_DIR" \
     --pca-samples "$PCA_SAMPLES" \
     --keep-pcs-max "$KEEP_PCS_MAX" \
@@ -37,12 +37,12 @@ python scripts/analyze_pca.py \
 
 echo ""
 echo "── 3/6  Embedding Gram matrix ──────────────────────────────"
-python scripts/analyze_embedding_gram.py \
+python3 scripts/analyze_embedding_gram.py \
     --run-dir "$RUN_DIR"
 
 echo ""
 echo "── 4/6  Parity-mode Gram matrices + cross-layer alignment ──"
-python scripts/analyze_parity_modes.py \
+python3 scripts/analyze_parity_modes.py \
     --run-dir "$RUN_DIR" \
     --degrees 2 4 8 16 \
     --align-indices $ALIGN_INDICES \
@@ -50,7 +50,7 @@ python scripts/analyze_parity_modes.py \
 
 echo ""
 echo "── 5/6  Decode d4 ──────────────────────────────────────────"
-python scripts/analyze_decode.py \
+python3 scripts/analyze_decode.py \
     --run-dir "$RUN_DIR" \
     --degree 4 \
     --num-samples "$NUM_DECODE_SAMPLES" \
@@ -58,7 +58,7 @@ python scripts/analyze_decode.py \
 
 echo ""
 echo "── 6/6  Decode d8 ──────────────────────────────────────────"
-python scripts/analyze_decode.py \
+python3 scripts/analyze_decode.py \
     --run-dir "$RUN_DIR" \
     --degree 8 \
     --num-samples "$NUM_DECODE_SAMPLES" \
@@ -66,7 +66,7 @@ python scripts/analyze_decode.py \
 
 echo ""
 echo "── Combining all plots into results.pdf ────────────────────"
-python scripts/combine_plots.py --run-dir "$RUN_DIR"
+python3 scripts/combine_plots.py --run-dir "$RUN_DIR"
 
 echo ""
 echo "Done."
