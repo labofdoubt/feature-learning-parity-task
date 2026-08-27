@@ -37,6 +37,7 @@ FILTERS+=(
   --filter "+ **/tb_logs/**"
   --filter "+ **/plots/**"
   --filter "+ **/analysis/**"
+  --filter "+ **/results.pdf"
   --filter "+ **/test_data.pt"
   --filter "+ **/train_data.pt"
 )
