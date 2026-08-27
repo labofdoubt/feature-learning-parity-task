@@ -28,20 +28,21 @@ for arg in "$@"; do
 done
 
 # rclone filter rules: first match wins; trailing "- **" makes the include list exhaustive.
-FILTERS=( --filter "- **/*.tmp" )
-[ "$ALL_CKPT" = 1 ] && FILTERS+=( --filter "+ **/checkpoints/step_*.pt" ) \
-                    || FILTERS+=( --filter "- **/checkpoints/step_*.pt" )
+# Note: paths are relative to SRC root, so no leading **/ needed.
+FILTERS=( --filter "- *.tmp" )
+[ "$ALL_CKPT" = 1 ] && FILTERS+=( --filter "+ checkpoints/step_*.pt" ) \
+                    || FILTERS+=( --filter "- checkpoints/step_*.pt" )
 FILTERS+=(
-  --filter "+ **/metrics.csv"
-  --filter "+ **/config.yaml"
-  --filter "+ **/tb_logs/**"
-  --filter "+ **/plots/**"
-  --filter "+ **/analysis/**"
-  --filter "+ **/results.pdf"
-  --filter "+ **/test_data.pt"
-  --filter "+ **/train_data.pt"
+  --filter "+ metrics.csv"
+  --filter "+ config.yaml"
+  --filter "+ tb_logs/**"
+  --filter "+ plots/**"
+  --filter "+ analysis/**"
+  --filter "+ results.pdf"
+  --filter "+ test_data.pt"
+  --filter "+ train_data.pt"
 )
-[ "$WITH_CKPT" = 1 ] && FILTERS+=( --filter "+ **/checkpoints/final.pt" )
+[ "$WITH_CKPT" = 1 ] && FILTERS+=( --filter "+ checkpoints/final.pt" )
 FILTERS+=( --filter "- **" )
 
 tier=light; [ "$WITH_CKPT" = 1 ] && tier=final-checkpoint; [ "$ALL_CKPT" = 1 ] && tier=all-checkpoints
