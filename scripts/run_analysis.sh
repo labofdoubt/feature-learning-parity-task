@@ -75,6 +75,12 @@ echo "── Combining all plots into results.pdf ──────────
 python3 scripts/combine_plots.py --run-dir "$RUN_DIR"
 
 echo ""
+echo "── Syncing to Google Drive ─────────────────────────────────"
+REMOTE="gdrive:parity/runs/$(basename "$RUN_DIR")"
+bash "$(dirname "$0")/backup_runs.sh" "$RUN_DIR" "$REMOTE" \
+  || echo "[backup] Warning: Drive sync failed — results remain local"
+
+echo ""
 echo "Done."
 echo "  Plots:   $RUN_DIR/plots/"
 echo "  CSVs:    $RUN_DIR/analysis/"
