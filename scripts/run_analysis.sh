@@ -47,7 +47,7 @@ python3 scripts/analyze_parity_modes.py \
     --batch-size "$BATCH_SIZE"
 
 echo ""
-echo "── 5/6  Decode d4 ──────────────────────────────────────────"
+echo "── 5/7  Decode d4 ──────────────────────────────────────────"
 python3 scripts/analyze_decode.py \
     --run-dir "$RUN_DIR" \
     --degree 4 \
@@ -55,10 +55,18 @@ python3 scripts/analyze_decode.py \
     --batch-size "$BATCH_SIZE"
 
 echo ""
-echo "── 6/6  Decode d8 ──────────────────────────────────────────"
+echo "── 6/7  Decode d8 ──────────────────────────────────────────"
 python3 scripts/analyze_decode.py \
     --run-dir "$RUN_DIR" \
     --degree 8 \
+    --num-samples "$NUM_DECODE_SAMPLES" \
+    --batch-size "$BATCH_SIZE"
+
+echo ""
+echo "── 7/7  Decode d16 ─────────────────────────────────────────"
+python3 scripts/analyze_decode.py \
+    --run-dir "$RUN_DIR" \
+    --degree 16 \
     --num-samples "$NUM_DECODE_SAMPLES" \
     --batch-size "$BATCH_SIZE"
 
@@ -71,6 +79,3 @@ echo "Done."
 echo "  Plots:   $RUN_DIR/plots/"
 echo "  CSVs:    $RUN_DIR/analysis/"
 echo "  Summary: $RUN_DIR/results.pdf"
-echo ""
-echo "To decode d16 (slow, ~677 partitions):"
-echo "  python scripts/analyze_decode.py --run-dir $RUN_DIR --degree 16"
