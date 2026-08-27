@@ -52,7 +52,7 @@ python scripts/analyze_decode.py \
     --batch-size "$BATCH_SIZE"
 
 echo ""
-echo "── 5/6  Decode d8 ──────────────────────────────────────────"
+echo "── 5/5  Decode d8 ──────────────────────────────────────────"
 python scripts/analyze_decode.py \
     --run-dir "$RUN_DIR" \
     --degree 8 \
@@ -60,12 +60,7 @@ python scripts/analyze_decode.py \
     --batch-size "$BATCH_SIZE"
 
 echo ""
-echo "── 6/6  Decode d16 (~677 tree partitions) ──────────────────"
-python scripts/analyze_decode.py \
-    --run-dir "$RUN_DIR" \
-    --degree 16 \
-    --num-samples "$NUM_DECODE_SAMPLES" \
-    --batch-size "$BATCH_SIZE"
-
-echo ""
 echo "Done.  Results in: $RUN_DIR/analysis/  and  $RUN_DIR/plots/"
+echo ""
+echo "To decode d16 (slow, ~677 partitions):"
+echo "  python scripts/analyze_decode.py --run-dir $RUN_DIR --degree 16"
