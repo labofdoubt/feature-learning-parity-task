@@ -44,7 +44,8 @@ def run(run_dir: Path) -> None:
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         path = plots_dir / "curves_by_degree.png"
-        fig.savefig(path, dpi=150)
+        fig.savefig(path, dpi=200)
+        fig.savefig(path.with_suffix(".pdf"), bbox_inches="tight")
         plt.close(fig)
         print(f"Saved: {path}")
 
@@ -63,7 +64,8 @@ def run(run_dir: Path) -> None:
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     path = plots_dir / "curves_total.png"
-    fig.savefig(path, dpi=150)
+    fig.savefig(path, dpi=200)
+    fig.savefig(path.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {path}")
 

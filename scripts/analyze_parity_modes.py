@@ -147,7 +147,8 @@ def run(
     fig_gram.suptitle(f"Parity-mode Gram matrices  –  {run_dir.name}")
     fig_gram.tight_layout()
     gram_path = plots_dir / f"parity_mode_gram_{kind}.png"
-    fig_gram.savefig(gram_path, dpi=150)
+    fig_gram.savefig(gram_path, dpi=200)
+    fig_gram.savefig(gram_path.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig_gram)
     print(f"Gram plot: {gram_path}")
 
@@ -187,7 +188,8 @@ def run(
         fig_align.suptitle(f"Alignment d{degree}  –  {run_dir.name}")
         fig_align.tight_layout()
         align_path = plots_dir / f"parity_cross_block_alignment_d{degree}.png"
-        fig_align.savefig(align_path, dpi=150)
+        fig_align.savefig(align_path, dpi=200)
+        fig_align.savefig(align_path.with_suffix(".pdf"), bbox_inches="tight")
         plt.close(fig_align)
         print(f"    Saved: {align_path}")
 

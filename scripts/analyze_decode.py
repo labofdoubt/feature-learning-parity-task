@@ -202,14 +202,26 @@ def decode_block(
 
 # ── Figure: table per block ────────────────────────────────────────────────────
 
+_HEADER_COLOR = "#2C5F8A"
+_ROW_COLORS = ["#FFFFFF", "#EDF3FA"]
+
+
 def render_table_figure(
     block_dfs: list[tuple[pd.DataFrame, float]],
     degree: int,
     run_name: str,
     out_path: Path,
+    max_rows: int = 30,
 ) -> None:
     n_blocks = len(block_dfs)
-    fig, axes = plt.subplots(n_blocks, 1, figsize=(10, max(3, len(block_dfs[0][0]) * 0.35 + 1) * n_blocks))
+    col_labels = ["partition", "norm_modified", "cosine"]
+
+    # One subplot per block, sized by the largest table shown
+    display_rows = min(max_rows, max(len(df) for df, _ in block_dfs))
+    row_h = 0.28   # inches per data row
+    header_h = 1.0  # inches for axes title + header row
+    panel_h = display_rows * row_h + header_h
+    fig, axes = plt.subplots(n_blocks, 1, figsize=(11, panel_h * n_blocks + 0.4))
     if n_blocks == 1:
         axes = [axes]
 
@@ -217,8 +229,11 @@ def render_table_figure(
         ax = axes[block_idx]
         ax.axis("off")
 
-        col_labels = ["partition", "norm_modified", "cosine"]
-        cell_text = df[col_labels].values.tolist()
+        display_df = df[col_labels].head(max_rows)
+        cell_text = [
+            [row["partition"], f"{row['norm_modified']:.5f}", f"{row['cosine']:.5f}"]
+            for _, row in display_df.iterrows()
+        ]
 
         tbl = ax.table(
             cellText=cell_text,
@@ -227,21 +242,36 @@ def render_table_figure(
             cellLoc="center",
         )
         tbl.auto_set_font_size(False)
-        tbl.set_fontsize(7)
-        tbl.auto_set_column_width(col=list(range(len(col_labels))))
+        tbl.set_fontsize(9)
 
-        # Left-align partition column
-        for row_idx in range(len(cell_text) + 1):
-            tbl[(row_idx, 0)].get_text().set_ha("left")
+        # Column widths: partition gets most of the space
+        col_widths = [0.60, 0.20, 0.20]
+        for (row_i, col_i), cell in tbl.get_celld().items():
+            cell.set_linewidth(0.5)
+            cell.set_width(col_widths[col_i])
+            if row_i == 0:
+                cell.set_facecolor(_HEADER_COLOR)
+                cell.get_text().set_color("white")
+                cell.get_text().set_fontweight("bold")
+            else:
+                cell.set_facecolor(_ROW_COLORS[(row_i - 1) % 2])
+            # Left-align partition column
+            if col_i == 0:
+                cell.get_text().set_ha("left")
+                cell.PAD = 0.03
 
+        shown = len(display_df)
+        total = len(df)
+        note = f"  (showing top {shown} of {total})" if total > shown else ""
         ax.set_title(
-            f"Block {block_idx}  —  d{degree} parity  —  norm_original = {orig_norm:.5f}",
-            fontsize=8, pad=4,
+            f"Block {block_idx}  —  d{degree} parity  —  norm_original = {orig_norm:.5f}{note}",
+            fontsize=10, pad=6, loc="left",
         )
 
-    fig.suptitle(f"Partition decoding d{degree}  –  {run_name}", fontsize=10, y=1.002)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    fig.suptitle(f"Partition decoding d{degree}  –  {run_name}", fontsize=12, y=1.002)
+    fig.tight_layout(pad=0.5)
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    fig.savefig(out_path.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out_path}")
 

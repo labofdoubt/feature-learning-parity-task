@@ -109,7 +109,8 @@ def run(run_dir: Path, pca_samples: int, keep_pcs_max: int, keep_pcs_step: int, 
     fig.suptitle(f"PCA Intervention MSE  –  {run_dir.name}")
     fig.tight_layout()
     plot_path = plots_dir / "pca_intervention_sweep.png"
-    fig.savefig(plot_path, dpi=150)
+    fig.savefig(plot_path, dpi=200)
+    fig.savefig(plot_path.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
     print(f"Plot saved: {plot_path}")
 

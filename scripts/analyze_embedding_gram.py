@@ -60,7 +60,8 @@ def run(run_dir: Path) -> None:
     fig.suptitle(f"Embedding Gram  –  {run_dir.name}")
     fig.tight_layout()
     plot_path = plots_dir / "embedding_gram.png"
-    fig.savefig(plot_path, dpi=150)
+    fig.savefig(plot_path, dpi=200)
+    fig.savefig(plot_path.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {plot_path}")
 
