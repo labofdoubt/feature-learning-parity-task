@@ -23,7 +23,12 @@ echo "Analysis pipeline for: $RUN_DIR"
 echo "============================================================"
 
 echo ""
-echo "── 1/5  PCA interventions ──────────────────────────────────"
+echo "── 1/6  Train/test curves ──────────────────────────────────"
+python scripts/analyze_curves.py \
+    --run-dir "$RUN_DIR"
+
+echo ""
+echo "── 2/6  PCA interventions ──────────────────────────────────"
 python scripts/analyze_pca.py \
     --run-dir "$RUN_DIR" \
     --pca-samples "$PCA_SAMPLES" \
@@ -31,12 +36,12 @@ python scripts/analyze_pca.py \
     --batch-size "$BATCH_SIZE"
 
 echo ""
-echo "── 2/5  Embedding Gram matrix ──────────────────────────────"
+echo "── 3/6  Embedding Gram matrix ──────────────────────────────"
 python scripts/analyze_embedding_gram.py \
     --run-dir "$RUN_DIR"
 
 echo ""
-echo "── 3/5  Parity-mode Gram matrices + cross-layer alignment ──"
+echo "── 4/6  Parity-mode Gram matrices + cross-layer alignment ──"
 python scripts/analyze_parity_modes.py \
     --run-dir "$RUN_DIR" \
     --degrees 2 4 8 16 \
@@ -44,7 +49,7 @@ python scripts/analyze_parity_modes.py \
     --batch-size "$BATCH_SIZE"
 
 echo ""
-echo "── 4/5  Decode d4 ──────────────────────────────────────────"
+echo "── 5/6  Decode d4 ──────────────────────────────────────────"
 python scripts/analyze_decode.py \
     --run-dir "$RUN_DIR" \
     --degree 4 \
@@ -52,7 +57,7 @@ python scripts/analyze_decode.py \
     --batch-size "$BATCH_SIZE"
 
 echo ""
-echo "── 5/5  Decode d8 ──────────────────────────────────────────"
+echo "── 6/6  Decode d8 ──────────────────────────────────────────"
 python scripts/analyze_decode.py \
     --run-dir "$RUN_DIR" \
     --degree 8 \
@@ -60,7 +65,14 @@ python scripts/analyze_decode.py \
     --batch-size "$BATCH_SIZE"
 
 echo ""
-echo "Done.  Results in: $RUN_DIR/analysis/  and  $RUN_DIR/plots/"
+echo "── Combining all plots into results.pdf ────────────────────"
+python scripts/combine_plots.py --run-dir "$RUN_DIR"
+
+echo ""
+echo "Done."
+echo "  Plots:   $RUN_DIR/plots/"
+echo "  CSVs:    $RUN_DIR/analysis/"
+echo "  Summary: $RUN_DIR/results.pdf"
 echo ""
 echo "To decode d16 (slow, ~677 partitions):"
 echo "  python scripts/analyze_decode.py --run-dir $RUN_DIR --degree 16"
