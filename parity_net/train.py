@@ -195,6 +195,20 @@ def train(config: ExperimentConfig) -> Path:
     writer = None
     if _HAS_TENSORBOARD:
         writer = _SummaryWriter(str(output_dir / "tb_logs"))
+        degree_slices_ = degree_slices_for_targets(target_names_)
+        degrees_ = sorted(degree_slices_.keys())
+        train_degree_tags = [f"train/d{d}" for d in degrees_]
+        test_degree_tags  = [f"test/d{d}"  for d in degrees_]
+        writer.add_custom_scalars({
+            "MSE by degree": {
+                "train": ["Multiline", train_degree_tags],
+                "test":  ["Multiline", test_degree_tags],
+            },
+            "Total MSE": {
+                "train": ["Multiline", ["train/total"]],
+                "test":  ["Multiline", ["test/total"]],
+            },
+        })
 
     test_data = make_dataset(
         training.test_samples,
@@ -420,27 +434,13 @@ def train(config: ExperimentConfig) -> Path:
             pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)
 
             if writer is not None:
-                # Total MSE: train batch vs test
-                writer.add_scalars("mse_total", {
-                    "train_batch": mse.item(),
-                    "test": metrics["test_mse"],
-                }, step)
-                if "train_set_mse" in train_pool_metrics:
-                    writer.add_scalars("mse_total", {"train_pool": train_pool_metrics["train_set_mse"]}, step)
-                # Per-degree MSE: train batch and test on the same chart per degree
-                batch_degree_mse = {
-                    degree: F.mse_loss(pred[:, slc], y_batch[:, slc]).item()
-                    for degree, slc in degree_slices_for_targets(target_names_).items()
-                }
+                writer.add_scalar("train/total", mse.item(), step)
+                writer.add_scalar("test/total", metrics["test_mse"], step)
                 for degree, slc in degree_slices_for_targets(target_names_).items():
-                    degree_scalars = {
-                        "train_batch": batch_degree_mse[degree],
-                        "test": metrics.get(f"test_mse_d{degree}", float("nan")),
-                    }
-                    pool_key = f"train_set_mse_d{degree}"
-                    if pool_key in train_pool_metrics:
-                        degree_scalars["train_pool"] = train_pool_metrics[pool_key]
-                    writer.add_scalars(f"mse_d{degree}", degree_scalars, step)
+                    writer.add_scalar(f"train/d{degree}",
+                                      F.mse_loss(pred[:, slc], y_batch[:, slc]).item(), step)
+                    writer.add_scalar(f"test/d{degree}",
+                                      metrics.get(f"test_mse_d{degree}", float("nan")), step)
 
         if should_checkpoint:
             save_checkpoint(
