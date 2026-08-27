@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Run the full analysis pipeline for a trained model run.
+#
+# Usage:
+#   ./scripts/run_analysis.sh <run-dir>
+#   ./scripts/run_analysis.sh runs/my_exp/N_2048
+#
+# Optional env-var overrides:
+#   PCA_SAMPLES=20000 ALIGN_INDICES="0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15" \
+#     ./scripts/run_analysis.sh runs/my_exp/N_2048
+
+set -euo pipefail
+
+RUN_DIR="${1:?Usage: $0 <run-dir>}"
+PCA_SAMPLES="${PCA_SAMPLES:-20000}"
+KEEP_PCS_MAX="${KEEP_PCS_MAX:-80}"
+ALIGN_INDICES="${ALIGN_INDICES:-0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15}"
+BATCH_SIZE="${BATCH_SIZE:-2048}"
+NUM_DECODE_SAMPLES="${NUM_DECODE_SAMPLES:-65536}"
+
+echo "============================================================"
+echo "Analysis pipeline for: $RUN_DIR"
+echo "============================================================"
+
+echo ""
+echo "── 1/5  PCA interventions ──────────────────────────────────"
+python scripts/analyze_pca.py \
+    --run-dir "$RUN_DIR" \
+    --pca-samples "$PCA_SAMPLES" \
+    --keep-pcs-max "$KEEP_PCS_MAX" \
+    --batch-size "$BATCH_SIZE"
+
+echo ""
+echo "── 2/5  Embedding Gram matrix ──────────────────────────────"
+python scripts/analyze_embedding_gram.py \
+    --run-dir "$RUN_DIR"
+
+echo ""
+echo "── 3/5  Parity-mode Gram matrices + cross-layer alignment ──"
+python scripts/analyze_parity_modes.py \
+    --run-dir "$RUN_DIR" \
+    --degrees 2 4 8 16 \
+    --align-indices $ALIGN_INDICES \
+    --batch-size "$BATCH_SIZE"
+
+echo ""
+echo "── 4/5  Decode d4 ──────────────────────────────────────────"
+python scripts/analyze_decode.py \
+    --run-dir "$RUN_DIR" \
+    --degree 4 \
+    --num-samples "$NUM_DECODE_SAMPLES" \
+    --batch-size "$BATCH_SIZE"
+
+echo ""
+echo "── 5/5  Decode d8 ──────────────────────────────────────────"
+python scripts/analyze_decode.py \
+    --run-dir "$RUN_DIR" \
+    --degree 8 \
+    --num-samples "$NUM_DECODE_SAMPLES" \
+    --batch-size "$BATCH_SIZE"
+
+echo ""
+echo "Done.  Results in: $RUN_DIR/analysis/  and  $RUN_DIR/plots/"
+echo ""
+echo "To decode d16 (slow, ~677 partitions):"
+echo "  python scripts/analyze_decode.py --run-dir $RUN_DIR --degree 16"

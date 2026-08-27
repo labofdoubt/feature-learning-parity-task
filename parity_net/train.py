@@ -11,6 +11,12 @@ import torch
 import torch.nn.functional as F
 from tqdm.auto import tqdm
 
+try:
+    from torch.utils.tensorboard import SummaryWriter as _SummaryWriter
+    _HAS_TENSORBOARD = True
+except ImportError:
+    _HAS_TENSORBOARD = False
+
 from .checkpoint import save_checkpoint
 from .config import ExperimentConfig, OptimizerConfig, load_config, save_config, write_default_config
 from .data import (
@@ -185,6 +191,10 @@ def train(config: ExperimentConfig) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     save_config(config, output_dir / "config.yaml")
+
+    writer = None
+    if _HAS_TENSORBOARD:
+        writer = _SummaryWriter(str(output_dir / "tb_logs"))
 
     test_data = make_dataset(
         training.test_samples,
@@ -384,6 +394,7 @@ def train(config: ExperimentConfig) -> Path:
 
         if should_validate:
             elapsed_seconds = time.perf_counter() - start_time
+            train_pool_metrics = train_set_metrics(model, train_data, training.batch_size, target_names_)
             row = {
                 "step": step,
                 "elapsed_seconds": elapsed_seconds,
@@ -396,7 +407,7 @@ def train(config: ExperimentConfig) -> Path:
                 **metrics,
                 # "train_mse" above is the current batch; these cover the whole fixed
                 # pool, so the gap against the test columns measures memorization.
-                **train_set_metrics(model, train_data, training.batch_size, target_names_),
+                **train_pool_metrics,
             }
             history.append(row)
             progress.set_postfix(
@@ -407,6 +418,29 @@ def train(config: ExperimentConfig) -> Path:
             )
             tqdm.write(str(row))
             pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)
+
+            if writer is not None:
+                # Total MSE: train batch vs test
+                writer.add_scalars("mse_total", {
+                    "train_batch": mse.item(),
+                    "test": metrics["test_mse"],
+                }, step)
+                if "train_set_mse" in train_pool_metrics:
+                    writer.add_scalars("mse_total", {"train_pool": train_pool_metrics["train_set_mse"]}, step)
+                # Per-degree MSE: train batch and test on the same chart per degree
+                batch_degree_mse = {
+                    degree: F.mse_loss(pred[:, slc], y_batch[:, slc]).item()
+                    for degree, slc in degree_slices_for_targets(target_names_).items()
+                }
+                for degree, slc in degree_slices_for_targets(target_names_).items():
+                    degree_scalars = {
+                        "train_batch": batch_degree_mse[degree],
+                        "test": metrics.get(f"test_mse_d{degree}", float("nan")),
+                    }
+                    pool_key = f"train_set_mse_d{degree}"
+                    if pool_key in train_pool_metrics:
+                        degree_scalars["train_pool"] = train_pool_metrics[pool_key]
+                    writer.add_scalars(f"mse_d{degree}", degree_scalars, step)
 
         if should_checkpoint:
             save_checkpoint(
@@ -441,6 +475,8 @@ def train(config: ExperimentConfig) -> Path:
         metrics=final_metrics,
         test_data_path=test_data_path,
     )
+    if writer is not None:
+        writer.close()
     return final_path
 
 
