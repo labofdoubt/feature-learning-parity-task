@@ -190,13 +190,20 @@ def decode_block(
             modified_mode.unsqueeze(0), full_mode.unsqueeze(0), dim=1, eps=1e-12
         ).item()
 
+        part_dir_norms = [
+            torch.linalg.vector_norm(input_dirs[p]).item() for p in parts
+        ]
+        score = modified_norm * cosine / max(original_norm, 1e-12)
+
         rows.append({
             "partition": partition_label(partition),
             "norm_modified": round(modified_norm, 6),
             "cosine": round(cosine, 6),
+            "score": round(score, 6),
+            "input_direction_norms": [round(n, 5) for n in part_dir_norms],
         })
 
-    df = pd.DataFrame(rows).sort_values("cosine", ascending=False).reset_index(drop=True)
+    df = pd.DataFrame(rows).sort_values("score", ascending=False).reset_index(drop=True)
     return df, original_norm
 
 
