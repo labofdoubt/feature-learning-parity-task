@@ -1,30 +1,24 @@
-"""Decode parity computation via partition analysis (d4, d8, d16).
+"""Partition-based decoding of parity modes, one table per block.
 
-For a target degree-d parity (over a chosen set of bit indices), this script
-enumerates a family of set partitions of those indices and, for each partition,
-estimates how much of the degree-d Fourier component of the residual block's
-output can be explained by the product of sub-degree Walsh directions.
+For a target degree-d parity (over bit indices 0..d-1 by default), at every
+residual block:
 
-Algorithm for partition {B_1, ..., B_k} at block `block_idx`:
-  v_i = E_x[r(x) * chi_{B_i}(x)]        # Walsh direction for each part
-  predicted_scalar = sum_a prod_i v_i[a]  # multilinear inner product (= sum of element-wise products)
-  true_vector = E_x[h_block(x) * chi_I(x)]   # full-degree Walsh direction
-  cosine = predicted_scalar / (prod_i ||v_i||)
+  1. original_mode  = E_x[r(x) * chi_I(x)]        (block residual update)
+  2. For each set partition of I into parts {B_1,...,B_k}:
+       h_reduced = E_x[h(x)] + sum_k E_x[h(x)*chi_{B_k}(x)] * chi_{B_k}(x)
+       modified_mode = E_x[r(h_reduced) * chi_I(x)]
+  3. Report: norm(original_mode), norm(modified_mode), cosine(original, modified)
 
-The table is sorted by |predicted_scalar| and saved as a CSV.  A bar chart
-shows the contribution of each partition.
-
-Partition families used:
+Partition families:
   d4  → all 15 Bell(4) set partitions
-  d8  → "tree" family (26 balanced binary-tree partitions)
-  d16 → "tree" family (677 partitions)
+  d8  → "tree" family (~26 binary-tree partitions)
+  d16 → "tree" family (~677 partitions, slow)
+
+Output per degree: one combined PNG (table per block) + per-block CSVs.
 
 Usage:
-    python scripts/analyze_decode.py --run-dir runs/my_exp/N_2048
-    python scripts/analyze_decode.py --run-dir runs/my_exp/N_2048 \\
-        --degree 4 --block-idx 3 --indices 0 1 2 3
+    python scripts/analyze_decode.py --run-dir runs/my_exp/N_2048 --degree 4
     python scripts/analyze_decode.py --run-dir runs/my_exp/N_2048 --degree 8
-    python scripts/analyze_decode.py --run-dir runs/my_exp/N_2048 --degree 16
 """
 
 from __future__ import annotations
@@ -39,64 +33,56 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
+import torch.nn.functional as F
 
 from parity_net.checkpoint import load_checkpoint
-from parity_net.data import load_dataset, target_names, tree_parity_specs
-from parity_net.train import max_target_degree_for_model, resolve_device, resolve_dtype
+from parity_net.data import load_dataset
+from parity_net.train import resolve_device, resolve_dtype
 
 
 # ── Partition generators ───────────────────────────────────────────────────────
 
-def all_set_partitions(items: list) -> Iterator[list[tuple]]:
-    """Yield all set partitions of `items` (Bell number count)."""
+def all_set_partitions(items: list) -> list[list[tuple]]:
     if not items:
-        yield []
-        return
+        return [[]]
     first, rest = items[0], items[1:]
+    result = []
     for partition in all_set_partitions(rest):
-        # Add first to each existing block
         for i in range(len(partition)):
-            new_partition = [list(b) for b in partition]
-            new_partition[i] = sorted(new_partition[i] + [first])
-            yield [tuple(sorted(b)) for b in new_partition]
-        # Or start a new singleton block
-        yield [tuple([first])] + [tuple(b) for b in partition]
+            new_p = [list(b) for b in partition]
+            new_p[i] = sorted(new_p[i] + [first])
+            result.append([tuple(sorted(b)) for b in new_p])
+        result.append([tuple([first])] + [tuple(b) for b in partition])
+    return result
 
 
 def tree_partitions(items: list, max_count: int = 10_000) -> list[list[tuple]]:
-    """Binary-tree partitions: recursively split each block in half.
-
-    Produces at most max_count partitions (stops adding new ones after that).
-    """
     result: list[list[tuple]] = [[tuple(items)]]
     seen: set[frozenset] = {frozenset([frozenset(items)])}
     queue: list[list[tuple]] = [[tuple(items)]]
-
     while queue and len(result) < max_count:
         partition = queue.pop(0)
-        for block_idx, block in enumerate(partition):
+        for bi, block in enumerate(partition):
             block = list(block)
             if len(block) < 2:
                 continue
             mid = len(block) // 2
             left, right = tuple(sorted(block[:mid])), tuple(sorted(block[mid:]))
-            new_partition = [b for j, b in enumerate(partition) if j != block_idx] + [left, right]
-            new_partition = sorted(new_partition)
-            key = frozenset(frozenset(b) for b in new_partition)
+            new_p = sorted([b for j, b in enumerate(partition) if j != bi] + [left, right])
+            key = frozenset(frozenset(b) for b in new_p)
             if key not in seen:
                 seen.add(key)
-                result.append(new_partition)
+                result.append(new_p)
                 if len(result) < max_count:
-                    queue.append(new_partition)
-
+                    queue.append(new_p)
     return result
 
 
 def partition_label(partition: list[tuple]) -> str:
-    return " | ".join("*".join(f"x{i}" for i in sorted(block)) for block in sorted(partition))
+    return " | ".join("*".join(f"x{i+1}" for i in sorted(b)) for b in sorted(partition))
 
 
-# ── Walsh direction estimation ─────────────────────────────────────────────────
+# ── Block helpers ──────────────────────────────────────────────────────────────
 
 @torch.no_grad()
 def block_residual_update(block, h: torch.Tensor) -> torch.Tensor:
@@ -107,106 +93,164 @@ def block_residual_update(block, h: torch.Tensor) -> torch.Tensor:
 
 
 @torch.no_grad()
-def compute_walsh_direction(
-    model, x: torch.Tensor, block_idx: int, indices: tuple[int, ...], batch_size: int
-) -> torch.Tensor:
-    """E_x[r(x) * prod_{i in indices} x_i]  →  (N,) vector."""
-    N = model.config.N
-    direction = torch.zeros(N, device=x.device, dtype=x.dtype)
-    for start in range(0, x.shape[0], batch_size):
-        x_b = x[start : start + batch_size]
-        h = model.embedding(x_b)
-        for i, block in enumerate(model.blocks):
-            if i == block_idx:
-                r = block_residual_update(block, h)
-                break
-            h = block(h)
-        idx = torch.tensor(indices, device=x.device, dtype=torch.long)
-        chi = x_b[:, idx].prod(dim=1)
-        direction += (r * chi.unsqueeze(1)).sum(dim=0)
-    return direction / x.shape[0]
+def input_to_block(model, x_batch: torch.Tensor, block_idx: int) -> torch.Tensor:
+    h = model.embedding(x_batch)
+    for i, block in enumerate(model.blocks):
+        if i == block_idx:
+            break
+        h = block(h)
+    return h
 
+
+# ── Core decode at one block ───────────────────────────────────────────────────
 
 @torch.no_grad()
-def compute_walsh_direction_post_residual(
-    model, x: torch.Tensor, block_idx: int, indices: tuple[int, ...], batch_size: int
-) -> torch.Tensor:
-    """Same but measures the full block output (h + r(h)) instead of r(h)."""
-    N = model.config.N
-    direction = torch.zeros(N, device=x.device, dtype=x.dtype)
-    for start in range(0, x.shape[0], batch_size):
-        x_b = x[start : start + batch_size]
-        h = model.embedding(x_b)
-        for i, block in enumerate(model.blocks):
-            if i == block_idx:
-                h_out = block(h)
-                break
-            h = block(h)
-        idx = torch.tensor(indices, device=x.device, dtype=torch.long)
-        chi = x_b[:, idx].prod(dim=1)
-        direction += (h_out * chi.unsqueeze(1)).sum(dim=0)
-    return direction / x.shape[0]
-
-
-# ── Main analysis ──────────────────────────────────────────────────────────────
-
-def decode(
+def decode_block(
     model,
     x: torch.Tensor,
     block_idx: int,
     indices: list[int],
     partitions: list[list[tuple]],
     batch_size: int,
-) -> pd.DataFrame:
-    """Build the partition decoding table."""
-    # Cache Walsh directions for every subset that appears in any partition
+) -> tuple[pd.DataFrame, float]:
+    """
+    Returns (df, original_norm) where df has columns:
+      partition, norm_modified, cosine
+    sorted by cosine descending.
+    """
+    # Collect all unique subsets that appear across partitions
     all_subsets: set[tuple] = set()
     for partition in partitions:
-        for block in partition:
-            all_subsets.add(tuple(sorted(block)))
+        for b in partition:
+            all_subsets.add(tuple(sorted(b)))
     full_key = tuple(sorted(indices))
-    all_subsets.add(full_key)
 
-    print(f"  Computing Walsh directions for {len(all_subsets)} subsets …")
-    directions: dict[tuple, torch.Tensor] = {}
-    for subset in sorted(all_subsets, key=len):
-        directions[subset] = compute_walsh_direction(model, x, block_idx, subset, batch_size)
+    n = model.config.N
+    device = x.device
+    dtype = x.dtype
 
-    true_vector = directions[full_key]
-    true_norm = true_vector.norm().item()
-    print(f"  True d{len(indices)} mode norm (from r): {true_norm:.5f}")
+    # One pass: accumulate block-input directions and original mode
+    constant_acc = torch.zeros(n, device=device, dtype=torch.float64)
+    subset_accs = {s: torch.zeros(n, device=device, dtype=torch.float64) for s in all_subsets}
+    full_mode_acc = torch.zeros(n, device=device, dtype=torch.float64)
+    total = 0
 
+    for start in range(0, x.shape[0], batch_size):
+        x_b = x[start:start + batch_size]
+        h = input_to_block(model, x_b, block_idx)
+        r = block_residual_update(model.blocks[block_idx], h)
+
+        h64 = h.to(dtype=torch.float64)
+        r64 = r.to(dtype=torch.float64)
+
+        idx_I = torch.tensor(list(full_key), device=device, dtype=torch.long)
+        chi_I = x_b[:, idx_I].prod(dim=1).to(dtype=torch.float64)
+        full_mode_acc += (chi_I.unsqueeze(1) * r64).sum(dim=0)
+        constant_acc += h64.sum(dim=0)
+
+        for s in all_subsets:
+            idx_s = torch.tensor(list(s), device=device, dtype=torch.long)
+            chi_s = x_b[:, idx_s].prod(dim=1).to(dtype=torch.float64)
+            subset_accs[s] += (chi_s.unsqueeze(1) * h64).sum(dim=0)
+
+        total += x_b.shape[0]
+
+    input_constant = (constant_acc / total).to(dtype=dtype)
+    input_dirs = {s: (v / total).to(dtype=dtype) for s, v in subset_accs.items()}
+    full_mode = (full_mode_acc / total).cpu()
+    original_norm = full_mode.norm().item()
+
+    # One pass per partition: reconstruct h_reduced and compute modified mode
     rows = []
     for partition in partitions:
         parts = [tuple(sorted(b)) for b in partition]
-        vecs = [directions[p] for p in parts]
-        # Multilinear inner product: element-wise product of all vectors, then sum
-        product = vecs[0].clone()
-        for v in vecs[1:]:
-            product = product * v
-        predicted_scalar = product.sum().item()
-        part_norms = [v.norm().item() for v in vecs]
-        denom = 1.0
-        for n in part_norms:
-            denom *= max(n, 1e-12)
+        mod_acc = torch.zeros(n, device=device, dtype=torch.float64)
+        mod_total = 0
+
+        for start in range(0, x.shape[0], batch_size):
+            x_b = x[start:start + batch_size]
+            bs = x_b.shape[0]
+
+            h_reduced = input_constant.unsqueeze(0).expand(bs, -1).clone()
+            for p in parts:
+                idx_p = torch.tensor(list(p), device=device, dtype=torch.long)
+                chi_p = x_b[:, idx_p].prod(dim=1)
+                h_reduced = h_reduced + chi_p.unsqueeze(1) * input_dirs[p].unsqueeze(0)
+
+            r_red = block_residual_update(model.blocks[block_idx], h_reduced)
+
+            idx_I = torch.tensor(list(full_key), device=device, dtype=torch.long)
+            chi_I = x_b[:, idx_I].prod(dim=1).to(dtype=torch.float64)
+            mod_acc += (chi_I.unsqueeze(1) * r_red.to(dtype=torch.float64)).sum(dim=0)
+            mod_total += bs
+
+        modified_mode = (mod_acc / mod_total).cpu()
+        modified_norm = modified_mode.norm().item()
+        cosine = F.cosine_similarity(
+            modified_mode.unsqueeze(0), full_mode.unsqueeze(0), dim=1, eps=1e-12
+        ).item()
+
         rows.append({
             "partition": partition_label(partition),
-            "num_blocks": len(partition),
-            "predicted_scalar": predicted_scalar,
-            "predicted_abs": abs(predicted_scalar),
-            "true_norm": true_norm,
-            "cosine": predicted_scalar / denom,
-            "part_norms": str([round(n, 5) for n in part_norms]),
+            "norm_modified": round(modified_norm, 6),
+            "cosine": round(cosine, 6),
         })
 
-    df = pd.DataFrame(rows).sort_values("predicted_abs", ascending=False).reset_index(drop=True)
-    return df
+    df = pd.DataFrame(rows).sort_values("cosine", ascending=False).reset_index(drop=True)
+    return df, original_norm
 
+
+# ── Figure: table per block ────────────────────────────────────────────────────
+
+def render_table_figure(
+    block_dfs: list[tuple[pd.DataFrame, float]],
+    degree: int,
+    run_name: str,
+    out_path: Path,
+) -> None:
+    n_blocks = len(block_dfs)
+    fig, axes = plt.subplots(n_blocks, 1, figsize=(10, max(3, len(block_dfs[0][0]) * 0.35 + 1) * n_blocks))
+    if n_blocks == 1:
+        axes = [axes]
+
+    for block_idx, (df, orig_norm) in enumerate(block_dfs):
+        ax = axes[block_idx]
+        ax.axis("off")
+
+        col_labels = ["partition", "norm_modified", "cosine"]
+        cell_text = df[col_labels].values.tolist()
+
+        tbl = ax.table(
+            cellText=cell_text,
+            colLabels=col_labels,
+            loc="center",
+            cellLoc="center",
+        )
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(7)
+        tbl.auto_set_column_width(col=list(range(len(col_labels))))
+
+        # Left-align partition column
+        for row_idx in range(len(cell_text) + 1):
+            tbl[(row_idx, 0)].get_text().set_ha("left")
+
+        ax.set_title(
+            f"Block {block_idx}  —  d{degree} parity  —  norm_original = {orig_norm:.5f}",
+            fontsize=8, pad=4,
+        )
+
+    fig.suptitle(f"Partition decoding d{degree}  –  {run_name}", fontsize=10, y=1.002)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+# ── Entry point ────────────────────────────────────────────────────────────────
 
 def run(
     run_dir: Path,
     degree: int,
-    block_idx: int | None,
     indices: list[int] | None,
     num_samples: int | None,
     batch_size: int,
@@ -217,77 +261,50 @@ def run(
     model, payload, _ = load_checkpoint(ckpt_path, device)
     config = payload["config"]
     training = config["training"]
-    task = config.get("task") or config["model"]
     dtype = resolve_dtype(training["dtype"])
-    model = model.to(device=device, dtype=dtype)
+    model = model.to(device=device, dtype=dtype).eval()
 
-    relevant_dim = int(task["relevant_dim"])
-    L = model.config.L
-
-    # Defaults for indices and block_idx
     if indices is None:
-        # Use the first contiguous block of `degree` relevant bits
         indices = list(range(degree))
-    if block_idx is None:
-        # Put the decode at the last block that reads out this degree (log2(degree)-1)
-        import math
-        block_idx = min(int(math.log2(degree)) - 1, L - 1)
-
-    print(f"\nDecode d{degree}  |  block_idx={block_idx}  |  indices={indices}")
 
     test_data = load_dataset(run_dir / "test_data.pt", device, dtype)
     x = test_data.x
     if num_samples is not None and num_samples < x.shape[0]:
         x = x[:num_samples]
 
-    # Choose partition family
     if degree <= 4:
-        partitions = list(all_set_partitions(indices))
-        print(f"  Using all Bell({degree})={len(partitions)} set partitions")
+        partitions = all_set_partitions(indices)
+        print(f"d{degree}: {len(partitions)} partitions (all Bell({degree}))")
     else:
         partitions = tree_partitions(indices, max_count=max_partitions)
-        print(f"  Using tree family: {len(partitions)} partitions")
-
-    df = decode(model, x, block_idx, indices, partitions, batch_size)
+        print(f"d{degree}: {len(partitions)} partitions (tree family, max={max_partitions})")
 
     analysis_dir = run_dir / "analysis"
     plots_dir = run_dir / "plots"
     analysis_dir.mkdir(exist_ok=True)
     plots_dir.mkdir(exist_ok=True)
 
-    csv_path = analysis_dir / f"decode_d{degree}_block{block_idx}.csv"
-    df.to_csv(csv_path, index=False)
-    print(f"\nTop-10 partitions by |predicted_scalar|:")
-    print(df.head(10)[["partition", "num_blocks", "predicted_abs", "cosine"]].to_string(index=False))
-    print(f"Full table: {csv_path}")
+    n_blocks = len(model.blocks)
+    block_results: list[tuple[pd.DataFrame, float]] = []
 
-    # Bar chart
-    top_k = min(30, len(df))
-    fig, ax = plt.subplots(figsize=(max(8, top_k * 0.4), 4))
-    colors = ["steelblue" if v >= 0 else "tomato" for v in df["predicted_scalar"].head(top_k)]
-    ax.bar(range(top_k), df["predicted_abs"].head(top_k).values, color=colors)
-    ax.axhline(y=df["true_norm"].iloc[0], color="k", linestyle="--", label="true mode norm")
-    ax.set_xticks(range(top_k))
-    ax.set_xticklabels(df["partition"].head(top_k).tolist(), rotation=90, fontsize=6)
-    ax.set_ylabel("|predicted scalar|")
-    ax.set_title(f"d{degree} partition decoding  –  block {block_idx}  –  {run_dir.name}")
-    ax.legend()
-    fig.tight_layout()
-    plot_path = plots_dir / f"decode_d{degree}_block{block_idx}.png"
-    fig.savefig(plot_path, dpi=150)
-    plt.close(fig)
-    print(f"Plot: {plot_path}")
+    for block_idx in range(n_blocks):
+        print(f"\n  Block {block_idx} / {n_blocks - 1} …")
+        df, orig_norm = decode_block(model, x, block_idx, indices, partitions, batch_size)
+        csv_path = analysis_dir / f"decode_d{degree}_block{block_idx}.csv"
+        df.to_csv(csv_path, index=False)
+        print(f"    norm_original = {orig_norm:.5f}  |  top cosine = {df['cosine'].iloc[0]:.4f}")
+        block_results.append((df, orig_norm))
+
+    plot_path = plots_dir / f"decode_d{degree}_blocks.png"
+    render_table_figure(block_results, degree, run_dir.name, plot_path)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--run-dir", required=True)
-    parser.add_argument("--degree", type=int, default=4,
-                        help="Target parity degree: 4, 8, or 16 (default: 4)")
-    parser.add_argument("--block-idx", type=int, default=None,
-                        help="Which block's residual update to decode (default: log2(degree)-1)")
+    parser.add_argument("--degree", type=int, default=4)
     parser.add_argument("--indices", type=int, nargs="+", default=None,
-                        help="Bit indices for the parity monomial (default: 0..degree-1)")
+                        help="Bit indices for the parity (default: 0..degree-1)")
     parser.add_argument("--num-samples", type=int, default=65_536)
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--max-partitions", type=int, default=1000,
@@ -296,7 +313,6 @@ def main() -> None:
     run(
         Path(args.run_dir),
         args.degree,
-        args.block_idx,
         args.indices,
         args.num_samples,
         args.batch_size,

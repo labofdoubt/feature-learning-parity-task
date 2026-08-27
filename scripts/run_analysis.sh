@@ -14,7 +14,6 @@ set -euo pipefail
 RUN_DIR="${1:?Usage: $0 <run-dir>}"
 PCA_SAMPLES="${PCA_SAMPLES:-20000}"
 KEEP_PCS_MAX="${KEEP_PCS_MAX:-80}"
-ALIGN_INDICES="${ALIGN_INDICES:-0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15}"
 BATCH_SIZE="${BATCH_SIZE:-2048}"
 NUM_DECODE_SAMPLES="${NUM_DECODE_SAMPLES:-65536}"
 
@@ -45,7 +44,6 @@ echo "── 4/6  Parity-mode Gram matrices + cross-layer alignment ──"
 python3 scripts/analyze_parity_modes.py \
     --run-dir "$RUN_DIR" \
     --degrees 2 4 8 16 \
-    --align-indices $ALIGN_INDICES \
     --batch-size "$BATCH_SIZE"
 
 echo ""
