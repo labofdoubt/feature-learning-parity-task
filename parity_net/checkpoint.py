@@ -79,9 +79,16 @@ def load_checkpoint(
         task=task_config,
         training=TrainingConfig(optimizer=opt_cfg, **training_raw),
     )
+    effective_exclude = list(config.task.exclude_targets)
+    if config.task.train_only_root:
+        deg = 2
+        while deg < config.task.relevant_dim:
+            if f"d{deg}" not in effective_exclude:
+                effective_exclude.append(f"d{deg}")
+            deg *= 2
     target_names_ = target_names(
         config.task.relevant_dim,
-        config.task.exclude_targets,
+        effective_exclude,
         max_target_degree_for_model(config.model),
     )
     output_dim = len(target_names_)
