@@ -342,3 +342,169 @@ def make_loader(dataset: ParityDataset, batch_size: int, shuffle: bool = True) -
         shuffle=shuffle,
         drop_last=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical non-uniform distribution (rho > 0)
+# ---------------------------------------------------------------------------
+
+def _check_hierarchical_args(relevant_dim: int, rho: float) -> None:
+    if not (0.0 <= rho < 1.0):
+        raise ValueError(f"rho must be in [0, 1), got {rho}")
+    if relevant_dim < 2 or (relevant_dim & (relevant_dim - 1)) != 0:
+        raise ValueError(
+            f"relevant_dim must be a power of 2 >= 2 for hierarchical sampling, got {relevant_dim}"
+        )
+
+
+def sample_hierarchical_inputs(
+    n: int,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    rho: float,
+    generator: torch.Generator | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sample n inputs from the hierarchical correlated parity distribution.
+
+    Generates inputs top-down through the same balanced binary parity tree used
+    by tree_parity_specs.  At each internal node with value P, the left child L
+    is drawn as +1 with probability (1+rho)/2 and the right child is R = P*L,
+    so L*R = P exactly.  rho=0 recovers the uniform distribution.
+
+    Returns:
+        x     : (n, input_dim) float tensor in {-1, +1}
+        root  : (n,) float tensor, the root parity value (= product of relevant bits)
+    """
+    _check_hierarchical_args(relevant_dim, rho)
+
+    # Sample root uniformly in {-1, +1}
+    root = (
+        torch.randint(0, 2, (n,), device=device, generator=generator)
+        .float()
+        .mul_(2)
+        .sub_(1)
+    )
+
+    # nodes shape: (n, num_nodes_at_current_level)
+    nodes = root.unsqueeze(1)  # level 0: one node (the root)
+    num_levels = (relevant_dim - 1).bit_length()  # log2(relevant_dim)
+    p_left = (1.0 + rho) / 2.0
+
+    for _ in range(num_levels):
+        num_nodes = nodes.shape[1]
+        u = torch.rand(n, num_nodes, device=device, generator=generator)
+        L = torch.where(
+            u < p_left,
+            torch.ones(n, num_nodes, device=device),
+            -torch.ones(n, num_nodes, device=device),
+        )
+        R = nodes * L  # P = L*R  =>  R = P/L = P*L  (since L in {-1,+1})
+        # Interleave: left child of node i at 2*i, right child at 2*i+1
+        nodes = torch.stack([L, R], dim=2).reshape(n, -1)  # (n, 2*num_nodes)
+
+    leaves = nodes  # (n, relevant_dim), the leaf values
+
+    irrel_dim = input_dim - relevant_dim
+    if irrel_dim > 0:
+        irrel = (
+            torch.randint(0, 2, (n, irrel_dim), device=device, generator=generator)
+            .float()
+            .mul_(2)
+            .sub_(1)
+        )
+        x = torch.cat([leaves, irrel], dim=1)
+    else:
+        x = leaves
+
+    return x.to(dtype=dtype), root.to(dtype=dtype)
+
+
+def make_hierarchical_dataset(
+    n: int,
+    rho: float,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    exclude_targets: list[str] | tuple[str, ...] | None = None,
+    max_degree: int | None = None,
+    generator: torch.Generator | None = None,
+) -> ParityDataset:
+    """Dataset of n samples from the hierarchical distribution p_rho.
+
+    Labels are computed from x using the same tree_parity_specs convention as
+    the rest of the codebase, so exclude_targets and max_degree apply normally.
+    """
+    x, _root = sample_hierarchical_inputs(
+        n, relevant_dim, input_dim, device, dtype, rho, generator
+    )
+    y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
+    return ParityDataset(x=x, y=y)
+
+
+# ---------------------------------------------------------------------------
+# Exhaustive uniform evaluation dataset
+# ---------------------------------------------------------------------------
+
+def make_uniform_eval_dataset(
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    eval_noise_repeats: int = 2,
+    seed: int = 0,
+    exclude_targets: list[str] | tuple[str, ...] | None = None,
+    max_degree: int | None = None,
+) -> ParityDataset:
+    """Fixed uniform evaluation dataset with exact relevant-bit coverage.
+
+    For relevant_dim <= 20, enumerates all 2^relevant_dim relevant-bit
+    configurations and pairs each with eval_noise_repeats independent draws of
+    the irrelevant bits.  For relevant_dim > 20, falls back to a large
+    Monte Carlo uniform sample of equivalent total size.
+
+    The irrelevant-bit draws are seeded for reproducibility.
+    """
+    irrel_dim = input_dim - relevant_dim
+    gen = torch.Generator(device=device)
+    gen.manual_seed(seed)
+
+    if relevant_dim <= 20:
+        k = relevant_dim
+        n_configs = 2 ** k
+        all_keys = torch.arange(n_configs, device=device, dtype=torch.long)
+        bit_positions = torch.arange(k, device=device, dtype=torch.long)
+        # rel_bits[i, j] = bit j of config i, mapped to {-1, +1}
+        rel_bits = (
+            ((all_keys.unsqueeze(1) >> bit_positions) & 1)
+            .float()
+            .mul_(2)
+            .sub_(1)
+        )  # (n_configs, k)
+        # Repeat each relevant config eval_noise_repeats times
+        rel_bits = rel_bits.repeat_interleave(eval_noise_repeats, dim=0)  # (n, k)
+        n = rel_bits.shape[0]
+        if irrel_dim > 0:
+            irrel = (
+                torch.randint(0, 2, (n, irrel_dim), device=device, generator=gen)
+                .float()
+                .mul_(2)
+                .sub_(1)
+            )
+            x = torch.cat([rel_bits, irrel], dim=1)
+        else:
+            x = rel_bits
+    else:
+        # Monte Carlo fallback
+        n = eval_noise_repeats * (2 ** 17)
+        x = (
+            torch.randint(0, 2, (n, input_dim), device=device, generator=gen)
+            .float()
+            .mul_(2)
+            .sub_(1)
+        )
+
+    y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
+    return ParityDataset(x=x.to(dtype=dtype), y=y)

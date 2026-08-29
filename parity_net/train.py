@@ -25,6 +25,9 @@ from .data import (
     exclusion_keys,
     labels_from_inputs,
     make_dataset,
+    make_hierarchical_dataset,
+    make_uniform_eval_dataset,
+    sample_hierarchical_inputs,
     sample_inputs_excluding,
     sample_unique_inputs_excluding,
     save_dataset,
@@ -139,11 +142,15 @@ def evaluate(
         stop = min(start + batch_size, x.shape[0])
         preds.append(model(x[start:stop]))
     pred = torch.cat(preds, dim=0)
-    metrics = {"test_mse": F.mse_loss(pred, y).item()}
+    metrics = {
+        "test_mse": F.mse_loss(pred, y).item(),
+        "test_acc": ((pred * y) > 0).float().mean().item(),
+    }
     if target_names_ is None:
         target_names_ = target_names()
     for degree, slc in degree_slices_for_targets(target_names_).items():
         metrics[f"test_mse_d{degree}"] = F.mse_loss(pred[:, slc], y[:, slc]).item()
+        metrics[f"test_acc_d{degree}"] = ((pred[:, slc] * y[:, slc]) > 0).float().mean().item()
     return metrics
 
 
@@ -180,7 +187,17 @@ def train(config: ExperimentConfig) -> Path:
     apply_matmul_precision(training.matmul_precision)
     torch.manual_seed(training.seed)
     max_degree = max_target_degree_for_model(model_config)
-    target_names_ = target_names(task_config.relevant_dim, task_config.exclude_targets, max_degree)
+    # When train_only_root is set, exclude all parity degrees below the root so
+    # the loss covers only the degree-relevant_dim target (explicit guard against
+    # accidentally retaining intermediate supervision in non-uniform experiments).
+    effective_exclude = list(task_config.exclude_targets)
+    if task_config.train_only_root:
+        deg = 2
+        while deg < task_config.relevant_dim:
+            if f"d{deg}" not in effective_exclude:
+                effective_exclude.append(f"d{deg}")
+            deg *= 2
+    target_names_ = target_names(task_config.relevant_dim, effective_exclude, max_degree)
     if model_config.input_dim != task_config.input_dim:
         model_config.input_dim = task_config.input_dim
     if model_config.relevant_dim != task_config.relevant_dim:
@@ -199,7 +216,7 @@ def train(config: ExperimentConfig) -> Path:
         degrees_ = sorted(degree_slices_.keys())
         train_degree_tags = [f"train/d{d}" for d in degrees_]
         test_degree_tags  = [f"test/d{d}"  for d in degrees_]
-        writer.add_custom_scalars({
+        custom_layout: dict = {
             "MSE by degree": {
                 "train": ["Multiline", train_degree_tags],
                 "test":  ["Multiline", test_degree_tags],
@@ -208,7 +225,20 @@ def train(config: ExperimentConfig) -> Path:
                 "train": ["Multiline", ["train/total"]],
                 "test":  ["Multiline", ["test/total"]],
             },
-        })
+            "Eval accuracy": {
+                "uniform":    ["Multiline", ["eval_uniform/acc"]],
+                "nonuniform": ["Multiline", ["eval_nonuniform/acc"]],
+            },
+            "Eval loss": {
+                "uniform":    ["Multiline", ["eval_uniform/loss"]],
+                "nonuniform": ["Multiline", ["eval_nonuniform/loss"]],
+            },
+            "Generalization gap": {
+                "loss_gap": ["Multiline", ["eval_gap/loss"]],
+                "acc_gap":  ["Multiline", ["eval_gap/acc"]],
+            },
+        }
+        writer.add_custom_scalars(custom_layout)
 
     test_data = make_dataset(
         training.test_samples,
@@ -216,7 +246,7 @@ def train(config: ExperimentConfig) -> Path:
         task_config.relevant_dim,
         device,
         dtype,
-        task_config.exclude_targets,
+        effective_exclude,
         max_degree,
     )
     test_data_path = output_dir / "test_data.pt"
@@ -233,24 +263,103 @@ def train(config: ExperimentConfig) -> Path:
         )
         test_exclusion_keys = torch.empty(0, device=device, dtype=torch.long)
 
+    task_rho = task_config.data_rho
+    eval_noise_repeats = task_config.eval_noise_repeats
+
+    # --- Uniform exhaustive eval dataset (fixed for the whole run) ---------------
+    # Enumerates all 2^relevant_dim relevant-bit configs (for k<=20) with
+    # eval_noise_repeats independent irrelevant-bit draws each.
+    eval_uniform = make_uniform_eval_dataset(
+        task_config.relevant_dim,
+        task_config.input_dim,
+        device,
+        dtype,
+        eval_noise_repeats=eval_noise_repeats,
+        seed=training.seed,
+        exclude_targets=effective_exclude,
+        max_degree=max_degree,
+    )
+    eval_uniform_path = output_dir / "eval_uniform.pt"
+    torch.save(
+        {
+            "x": eval_uniform.x.cpu(),
+            "y": eval_uniform.y.cpu(),
+            "rho": 0.0,
+            "relevant_dim": task_config.relevant_dim,
+            "input_dim": task_config.input_dim,
+            "eval_noise_repeats": eval_noise_repeats,
+            "seed": training.seed,
+            "kind": "uniform_exhaustive",
+        },
+        eval_uniform_path,
+    )
+
+    # --- Non-uniform eval dataset (only when rho > 0) ----------------------------
+    eval_nonuniform: ParityDataset | None = None
+    eval_nonuniform_path: Path | None = None
+    if task_rho > 0.0:
+        n_nonuniform = eval_uniform.x.shape[0]
+        gen_nonuniform = torch.Generator(device=device)
+        gen_nonuniform.manual_seed(training.seed + 2_000_003)
+        eval_nonuniform = make_hierarchical_dataset(
+            n_nonuniform,
+            task_rho,
+            task_config.relevant_dim,
+            task_config.input_dim,
+            device,
+            dtype,
+            effective_exclude,
+            max_degree,
+            generator=gen_nonuniform,
+        )
+        eval_nonuniform_path = output_dir / "eval_nonuniform.pt"
+        torch.save(
+            {
+                "x": eval_nonuniform.x.cpu(),
+                "y": eval_nonuniform.y.cpu(),
+                "rho": task_rho,
+                "relevant_dim": task_config.relevant_dim,
+                "input_dim": task_config.input_dim,
+                "eval_noise_repeats": eval_noise_repeats,
+                "seed": training.seed + 2_000_003,
+                "kind": "nonuniform_hierarchical",
+            },
+            eval_nonuniform_path,
+        )
+
     # With train_samples set, training draws a fixed pool of that many distinct inputs
     # once and never sees anything else; otherwise every step gets a fresh sample.
+    # When task_rho > 0, pool samples come from the hierarchical distribution rather
+    # than the uniform one; uniqueness is not enforced (not meaningful for large n).
     train_data = None
     train_data_path = None
     train_batch_size = training.batch_size
     if training.train_samples is not None:
         if training.train_samples <= 0:
             raise ValueError("train_samples must be positive or null")
-        train_x = sample_unique_inputs_excluding(
-            training.train_samples,
-            task_config.input_dim,
-            device,
-            test_exclusion_keys,
-        ).to(dtype=dtype)
+        if task_rho > 0.0:
+            gen_train = torch.Generator(device=device)
+            gen_train.manual_seed(training.seed)
+            train_x, _ = sample_hierarchical_inputs(
+                training.train_samples,
+                task_config.relevant_dim,
+                task_config.input_dim,
+                device,
+                dtype,
+                task_rho,
+                generator=gen_train,
+            )
+        else:
+            train_x = sample_unique_inputs_excluding(
+                training.train_samples,
+                task_config.input_dim,
+                device,
+                test_exclusion_keys,
+            ).to(dtype=dtype)
         train_y = labels_from_inputs(
             train_x,
             task_config.relevant_dim,
-            task_config.exclude_targets,
+            effective_exclude,
             max_degree,
         ).to(dtype=dtype)
         train_data = ParityDataset(x=train_x, y=train_y)
@@ -323,16 +432,26 @@ def train(config: ExperimentConfig) -> Path:
     for step in progress:
         model.train()
         if train_data is None:
-            x_batch = sample_inputs_excluding(
-                training.batch_size,
-                task_config.input_dim,
-                device,
-                test_exclusion_keys,
-            ).to(dtype=dtype)
+            if task_rho > 0.0:
+                x_batch, _ = sample_hierarchical_inputs(
+                    training.batch_size,
+                    task_config.relevant_dim,
+                    task_config.input_dim,
+                    device,
+                    dtype,
+                    task_rho,
+                )
+            else:
+                x_batch = sample_inputs_excluding(
+                    training.batch_size,
+                    task_config.input_dim,
+                    device,
+                    test_exclusion_keys,
+                ).to(dtype=dtype)
             y_batch = labels_from_inputs(
                 x_batch,
                 task_config.relevant_dim,
-                task_config.exclude_targets,
+                effective_exclude,
                 max_degree,
             ).to(dtype=dtype)
         else:
@@ -409,6 +528,25 @@ def train(config: ExperimentConfig) -> Path:
         if should_validate:
             elapsed_seconds = time.perf_counter() - start_time
             train_pool_metrics = train_set_metrics(model, train_data, training.batch_size, target_names_)
+
+            # Evaluate on the two fixed held-out datasets
+            m_uniform = evaluate(
+                model, eval_uniform.x, eval_uniform.y, training.batch_size, target_names_
+            )
+            eval_uniform_metrics = {
+                k.replace("test_", "eval_uniform_", 1): v for k, v in m_uniform.items()
+            }
+
+            eval_nonuniform_metrics: dict = {}
+            if eval_nonuniform is not None:
+                m_nonuniform = evaluate(
+                    model, eval_nonuniform.x, eval_nonuniform.y,
+                    training.batch_size, target_names_,
+                )
+                eval_nonuniform_metrics = {
+                    k.replace("test_", "eval_nonuniform_", 1): v for k, v in m_nonuniform.items()
+                }
+
             row = {
                 "step": step,
                 "elapsed_seconds": elapsed_seconds,
@@ -422,6 +560,8 @@ def train(config: ExperimentConfig) -> Path:
                 # "train_mse" above is the current batch; these cover the whole fixed
                 # pool, so the gap against the test columns measures memorization.
                 **train_pool_metrics,
+                **eval_uniform_metrics,
+                **eval_nonuniform_metrics,
             }
             history.append(row)
             progress.set_postfix(
@@ -442,6 +582,26 @@ def train(config: ExperimentConfig) -> Path:
                     writer.add_scalar(f"test/d{degree}",
                                       metrics.get(f"test_mse_d{degree}", float("nan")), step)
 
+                # Uniform eval
+                writer.add_scalar("eval_uniform/loss", m_uniform["test_mse"], step)
+                writer.add_scalar("eval_uniform/acc",  m_uniform["test_acc"], step)
+
+                # Non-uniform eval (only when rho > 0)
+                if eval_nonuniform is not None:
+                    writer.add_scalar("eval_nonuniform/loss", m_nonuniform["test_mse"], step)
+                    writer.add_scalar("eval_nonuniform/acc",  m_nonuniform["test_acc"], step)
+                    # Generalization gap
+                    writer.add_scalar(
+                        "eval_gap/loss",
+                        m_uniform["test_mse"] - m_nonuniform["test_mse"],
+                        step,
+                    )
+                    writer.add_scalar(
+                        "eval_gap/acc",
+                        m_nonuniform["test_acc"] - m_uniform["test_acc"],
+                        step,
+                    )
+
         if should_checkpoint:
             save_checkpoint(
                 ckpt_dir / f"step_{step:08d}.pt",
@@ -455,11 +615,25 @@ def train(config: ExperimentConfig) -> Path:
             )
 
     final_metrics = evaluate(model, test_data.x, test_data.y, training.batch_size, target_names_)
+    m_uniform_final = evaluate(
+        model, eval_uniform.x, eval_uniform.y, training.batch_size, target_names_
+    )
+    final_eval_uniform = {k.replace("test_", "eval_uniform_", 1): v for k, v in m_uniform_final.items()}
+    final_eval_nonuniform: dict = {}
+    if eval_nonuniform is not None:
+        m_nonuniform_final = evaluate(
+            model, eval_nonuniform.x, eval_nonuniform.y, training.batch_size, target_names_
+        )
+        final_eval_nonuniform = {
+            k.replace("test_", "eval_nonuniform_", 1): v for k, v in m_nonuniform_final.items()
+        }
     final_row = {
         "step": training.num_steps,
         "elapsed_seconds": time.perf_counter() - start_time,
         **final_metrics,
         **train_set_metrics(model, train_data, training.batch_size, target_names_),
+        **final_eval_uniform,
+        **final_eval_nonuniform,
     }
     history.append(final_row)
     pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)

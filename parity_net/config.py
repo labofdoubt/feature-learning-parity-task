@@ -41,6 +41,14 @@ class TaskConfig:
     input_dim: int = 32
     relevant_dim: int = 16
     exclude_targets: list[str] = field(default_factory=list)
+    # Hierarchical non-uniform distribution parameter (0 = uniform).
+    data_rho: float = 0.0
+    # For uniform exhaustive eval: independent irrelevant-bit draws per relevant config.
+    eval_noise_repeats: int = 2
+    # When True, training loss covers only the root parity (degree relevant_dim).
+    # All lower-degree auxiliary targets are excluded from the loss even if they appear
+    # in exclude_targets; this makes non-uniform experiments explicit and safe.
+    train_only_root: bool = False
 
 
 @dataclass
