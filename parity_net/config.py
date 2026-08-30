@@ -43,6 +43,15 @@ class TaskConfig:
     exclude_targets: list[str] = field(default_factory=list)
     # Hierarchical non-uniform distribution parameter (0 = uniform).
     data_rho: float = 0.0
+    # Which data distribution to use when data_rho > 0.
+    #   "hierarchical"        – existing top-down biased tree all the way to individual bits.
+    #   "hierarchical_degree2"– biased tree stops at degree-2 latents z_i; each z_i is then
+    #                           expanded into two bits via a fresh uniform random sign, so
+    #                           E[S * x_j] = 0 for every individual bit x_j.
+    #   "uniform"             – always sample uniformly regardless of data_rho.
+    # Default is "hierarchical" so that existing configs with data_rho > 0 and no
+    # data_distribution key continue to behave as before.
+    data_distribution: str = "hierarchical"
     # For uniform exhaustive eval: independent irrelevant-bit draws per relevant config.
     eval_noise_repeats: int = 2
     # When True, training loss covers only the root parity (degree relevant_dim).

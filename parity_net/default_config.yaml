@@ -26,6 +26,7 @@ task:
   relevant_dim: 16
   exclude_targets: []
   data_rho: 0.0
+  data_distribution: hierarchical
   eval_noise_repeats: 2
   train_only_root: false
 training:

@@ -508,3 +508,110 @@ def make_uniform_eval_dataset(
 
     y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
     return ParityDataset(x=x.to(dtype=dtype), y=y)
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical-degree-2 distribution: bias stops at degree-2 latents
+# ---------------------------------------------------------------------------
+
+def sample_hierarchical_degree2_inputs(
+    n: int,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    rho: float,
+    generator: torch.Generator | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Hierarchical distribution truncated at degree-2 latents.
+
+    Generates z_1..z_{k/2} using the same top-down biased binary tree as
+    sample_hierarchical_inputs (with the same rho), then expands each z_i
+    into two individual input bits via:
+        x_{2i-1} = r_i,   x_{2i} = z_i * r_i,   r_i ~ Unif{-1,+1}
+
+    This guarantees E[S * x_j] = 0 for every individual bit x_j regardless
+    of rho, while preserving hierarchical correlations at degree 2 and above.
+    rho=0 reduces to the ordinary uniform distribution.
+
+    Returns:
+        x    : (n, input_dim) float tensor in {-1, +1}
+        root : (n,) float tensor, the root parity (= product of relevant bits)
+    """
+    _check_hierarchical_args(relevant_dim, rho)
+
+    num_z = relevant_dim // 2  # number of degree-2 latent variables
+
+    # Sample root uniformly in {-1, +1}
+    root = (
+        torch.randint(0, 2, (n,), device=device, generator=generator)
+        .float()
+        .mul_(2)
+        .sub_(1)
+    )
+
+    if num_z == 1:
+        # k=2 special case: the single z is the root itself
+        z = root.unsqueeze(1)  # (n, 1)
+    else:
+        # Run the biased top-down tree to produce num_z leaves (the z's).
+        # num_z is a power of 2 >= 2 since relevant_dim is a power of 2 >= 4.
+        nodes = root.unsqueeze(1)
+        num_levels = (num_z - 1).bit_length()  # log2(num_z)
+        p_left = (1.0 + rho) / 2.0
+        for _ in range(num_levels):
+            num_nodes = nodes.shape[1]
+            u = torch.rand(n, num_nodes, device=device, generator=generator)
+            L = torch.where(
+                u < p_left,
+                torch.ones(n, num_nodes, device=device),
+                -torch.ones(n, num_nodes, device=device),
+            )
+            R = nodes * L
+            nodes = torch.stack([L, R], dim=2).reshape(n, -1)
+        z = nodes  # (n, num_z)
+
+    # Expand each z_i into two bits: x_{2i-1} = r_i, x_{2i} = z_i * r_i
+    r = (
+        torch.randint(0, 2, (n, num_z), device=device, generator=generator)
+        .float()
+        .mul_(2)
+        .sub_(1)
+    )
+    x_left = r          # (n, num_z)
+    x_right = z * r     # (n, num_z)
+    # Interleave into (n, relevant_dim): positions 2i -> x_left[:,i], 2i+1 -> x_right[:,i]
+    x_rel = torch.stack([x_left, x_right], dim=2).reshape(n, relevant_dim)
+
+    irrel_dim = input_dim - relevant_dim
+    if irrel_dim > 0:
+        irrel = (
+            torch.randint(0, 2, (n, irrel_dim), device=device, generator=generator)
+            .float()
+            .mul_(2)
+            .sub_(1)
+        )
+        x = torch.cat([x_rel, irrel], dim=1)
+    else:
+        x = x_rel
+
+    return x.to(dtype=dtype), root.to(dtype=dtype)
+
+
+def make_hierarchical_degree2_dataset(
+    n: int,
+    rho: float,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    exclude_targets: list[str] | tuple[str, ...] | None = None,
+    max_degree: int | None = None,
+    generator: torch.Generator | None = None,
+) -> ParityDataset:
+    """Dataset of n samples from the degree-2-truncated hierarchical distribution."""
+    x, _root = sample_hierarchical_degree2_inputs(
+        n, relevant_dim, input_dim, device, dtype, rho, generator
+    )
+    y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
+    return ParityDataset(x=x, y=y)

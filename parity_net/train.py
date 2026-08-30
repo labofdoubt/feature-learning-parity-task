@@ -26,7 +26,9 @@ from .data import (
     labels_from_inputs,
     make_dataset,
     make_hierarchical_dataset,
+    make_hierarchical_degree2_dataset,
     make_uniform_eval_dataset,
+    sample_hierarchical_degree2_inputs,
     sample_hierarchical_inputs,
     sample_inputs_excluding,
     sample_unique_inputs_excluding,
@@ -264,6 +266,9 @@ def train(config: ExperimentConfig) -> Path:
         test_exclusion_keys = torch.empty(0, device=device, dtype=torch.long)
 
     task_rho = task_config.data_rho
+    task_distribution = task_config.data_distribution
+    use_nonuniform = task_rho > 0.0 and task_distribution != "uniform"
+    use_degree2 = use_nonuniform and task_distribution == "hierarchical_degree2"
     eval_noise_repeats = task_config.eval_noise_repeats
 
     # --- Uniform exhaustive eval dataset (fixed for the whole run) ---------------
@@ -294,24 +299,39 @@ def train(config: ExperimentConfig) -> Path:
         eval_uniform_path,
     )
 
-    # --- Non-uniform eval dataset (only when rho > 0) ----------------------------
+    # --- Non-uniform eval dataset (only when rho > 0 and distribution != uniform) -
     eval_nonuniform: ParityDataset | None = None
     eval_nonuniform_path: Path | None = None
-    if task_rho > 0.0:
+    if use_nonuniform:
         n_nonuniform = eval_uniform.x.shape[0]
         gen_nonuniform = torch.Generator(device=device)
         gen_nonuniform.manual_seed(training.seed + 2_000_003)
-        eval_nonuniform = make_hierarchical_dataset(
-            n_nonuniform,
-            task_rho,
-            task_config.relevant_dim,
-            task_config.input_dim,
-            device,
-            dtype,
-            effective_exclude,
-            max_degree,
-            generator=gen_nonuniform,
-        )
+        if use_degree2:
+            eval_nonuniform = make_hierarchical_degree2_dataset(
+                n_nonuniform,
+                task_rho,
+                task_config.relevant_dim,
+                task_config.input_dim,
+                device,
+                dtype,
+                effective_exclude,
+                max_degree,
+                generator=gen_nonuniform,
+            )
+            kind_str = "nonuniform_hierarchical_degree2"
+        else:
+            eval_nonuniform = make_hierarchical_dataset(
+                n_nonuniform,
+                task_rho,
+                task_config.relevant_dim,
+                task_config.input_dim,
+                device,
+                dtype,
+                effective_exclude,
+                max_degree,
+                generator=gen_nonuniform,
+            )
+            kind_str = "nonuniform_hierarchical"
         eval_nonuniform_path = output_dir / "eval_nonuniform.pt"
         torch.save(
             {
@@ -322,7 +342,7 @@ def train(config: ExperimentConfig) -> Path:
                 "input_dim": task_config.input_dim,
                 "eval_noise_repeats": eval_noise_repeats,
                 "seed": training.seed + 2_000_003,
-                "kind": "nonuniform_hierarchical",
+                "kind": kind_str,
             },
             eval_nonuniform_path,
         )
@@ -337,18 +357,29 @@ def train(config: ExperimentConfig) -> Path:
     if training.train_samples is not None:
         if training.train_samples <= 0:
             raise ValueError("train_samples must be positive or null")
-        if task_rho > 0.0:
+        if use_nonuniform:
             gen_train = torch.Generator(device=device)
             gen_train.manual_seed(training.seed)
-            train_x, _ = sample_hierarchical_inputs(
-                training.train_samples,
-                task_config.relevant_dim,
-                task_config.input_dim,
-                device,
-                dtype,
-                task_rho,
-                generator=gen_train,
-            )
+            if use_degree2:
+                train_x, _ = sample_hierarchical_degree2_inputs(
+                    training.train_samples,
+                    task_config.relevant_dim,
+                    task_config.input_dim,
+                    device,
+                    dtype,
+                    task_rho,
+                    generator=gen_train,
+                )
+            else:
+                train_x, _ = sample_hierarchical_inputs(
+                    training.train_samples,
+                    task_config.relevant_dim,
+                    task_config.input_dim,
+                    device,
+                    dtype,
+                    task_rho,
+                    generator=gen_train,
+                )
         else:
             train_x = sample_unique_inputs_excluding(
                 training.train_samples,
@@ -432,15 +463,25 @@ def train(config: ExperimentConfig) -> Path:
     for step in progress:
         model.train()
         if train_data is None:
-            if task_rho > 0.0:
-                x_batch, _ = sample_hierarchical_inputs(
-                    training.batch_size,
-                    task_config.relevant_dim,
-                    task_config.input_dim,
-                    device,
-                    dtype,
-                    task_rho,
-                )
+            if use_nonuniform:
+                if use_degree2:
+                    x_batch, _ = sample_hierarchical_degree2_inputs(
+                        training.batch_size,
+                        task_config.relevant_dim,
+                        task_config.input_dim,
+                        device,
+                        dtype,
+                        task_rho,
+                    )
+                else:
+                    x_batch, _ = sample_hierarchical_inputs(
+                        training.batch_size,
+                        task_config.relevant_dim,
+                        task_config.input_dim,
+                        device,
+                        dtype,
+                        task_rho,
+                    )
             else:
                 x_batch = sample_inputs_excluding(
                     training.batch_size,
