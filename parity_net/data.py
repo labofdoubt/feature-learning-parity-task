@@ -615,3 +615,155 @@ def make_hierarchical_degree2_dataset(
     )
     y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
     return ParityDataset(x=x, y=y)
+
+
+# ---------------------------------------------------------------------------
+# Reuse-star task: three degree-16 targets sharing one degree-8 constituent
+# ---------------------------------------------------------------------------
+# Fixed layout for d=32:
+#   x[0:8]   → A-block  (shared constituent)
+#   x[8:16]  → B-block  (private partner for S1 = A·B)
+#   x[16:24] → C-block  (private partner for S2 = A·C)
+#   x[24:32] → D-block  (private partner for S3 = A·D)
+#
+# Latent generation (rho > 0):
+#   S1, S2, S3 ~ Unif{-1,+1} independently
+#   A ~ P(A=+1) = (1+rho)/2                  (biased shared feature)
+#   B = S1·A,  C = S2·A,  D = S3·A           (derived private features)
+#
+# At rho=0 the full 32-bit distribution is exactly i.i.d. Unif{-1,+1}.
+
+REUSE_STAR_INPUT_DIM   = 32
+REUSE_STAR_BLOCK_SIZE  = 8
+REUSE_STAR_NUM_TARGETS = 3
+
+# Target supports (0-indexed bit positions); useful for spectral analysis later.
+REUSE_STAR_SHARED_SUPPORT: tuple[int, ...] = tuple(range(8))
+REUSE_STAR_PRIVATE_SUPPORTS: list[tuple[int, ...]] = [
+    tuple(range(8,  16)),
+    tuple(range(16, 24)),
+    tuple(range(24, 32)),
+]
+REUSE_STAR_TARGET_SUPPORTS: list[tuple[int, ...]] = [
+    REUSE_STAR_SHARED_SUPPORT + priv
+    for priv in REUSE_STAR_PRIVATE_SUPPORTS
+]
+REUSE_STAR_TARGET_NAMES = ["s1", "s2", "s3"]
+
+
+def _expand_block_from_root(
+    root: torch.Tensor,
+    rho: float,
+    data_distribution: str,
+    device: torch.device,
+    dtype: torch.dtype,
+    generator: torch.Generator | None = None,
+    block_size: int = 8,
+) -> torch.Tensor:
+    """Expand a block of `block_size` bits conditional on their product equalling `root`.
+
+    data_distribution selects the internal sub-parity structure:
+      "hierarchical"         – rho-biased top-down tree down to individual bits.
+      "hierarchical_degree2" – rho-biased tree stops at degree-2 latents; each z_i is
+                               then split uniformly into two bits.
+      "uniform"              – uniform conditional expansion (product = root, rho ignored).
+
+    root : (n,) tensor of ±1 values.
+    Returns: (n, block_size) float tensor in {-1, +1}.
+    """
+    n = root.shape[0]
+    eff_rho = 0.0 if data_distribution == "uniform" else rho
+
+    if data_distribution == "hierarchical_degree2":
+        num_z = block_size // 2  # 4 for block_size=8
+        nodes = root.float().unsqueeze(1)
+        num_levels = (num_z - 1).bit_length()
+        p_left = (1.0 + eff_rho) / 2.0
+        for _ in range(num_levels):
+            m = nodes.shape[1]
+            u = torch.rand(n, m, device=device, generator=generator)
+            L = torch.where(u < p_left, torch.ones(n, m, device=device), -torch.ones(n, m, device=device))
+            R = nodes * L
+            nodes = torch.stack([L, R], dim=2).reshape(n, -1)
+        z = nodes  # (n, num_z)
+        r = torch.randint(0, 2, (n, num_z), device=device, generator=generator).float().mul_(2).sub_(1)
+        bits = torch.stack([r, z * r], dim=2).reshape(n, block_size)
+    else:
+        # "hierarchical" (with eff_rho) or "uniform" (eff_rho=0)
+        num_levels = (block_size - 1).bit_length()
+        nodes = root.float().unsqueeze(1)
+        p_left = (1.0 + eff_rho) / 2.0
+        for _ in range(num_levels):
+            m = nodes.shape[1]
+            u = torch.rand(n, m, device=device, generator=generator)
+            L = torch.where(u < p_left, torch.ones(n, m, device=device), -torch.ones(n, m, device=device))
+            R = nodes * L
+            nodes = torch.stack([L, R], dim=2).reshape(n, -1)
+        bits = nodes  # (n, block_size)
+
+    return bits.to(dtype=dtype)
+
+
+def sample_reuse_star_inputs(
+    n: int,
+    rho: float,
+    data_distribution: str,
+    device: torch.device,
+    dtype: torch.dtype,
+    generator: torch.Generator | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sample n inputs for the reuse-star task.
+
+    Always generates the full d=32 input and all three targets [S1, S2, S3].
+    The active-target mask in training controls which targets contribute to the loss;
+    the data distribution itself never depends on num_reuse_targets.
+
+    Returns:
+        x       : (n, 32) float tensor in {-1, +1}
+        targets : (n, 3)  float tensor – [S1, S2, S3] recomputed from x
+    """
+    # Sample three roots uniformly
+    S_raw = (
+        torch.randint(0, 2, (n, 3), device=device, generator=generator)
+        .float().mul_(2).sub_(1)
+    )
+    S1, S2, S3 = S_raw[:, 0], S_raw[:, 1], S_raw[:, 2]
+
+    # Shared constituent A: biased by rho
+    p_A = (1.0 + rho) / 2.0
+    u_A = torch.rand(n, device=device, generator=generator)
+    A = torch.where(u_A < p_A, torch.ones(n, device=device), -torch.ones(n, device=device))
+
+    # Private constituents determined by roots and A
+    B = S1 * A
+    C = S2 * A
+    D = S3 * A
+
+    # Expand each macro-variable into 8 input bits
+    x_A = _expand_block_from_root(A, rho, data_distribution, device, dtype, generator)
+    x_B = _expand_block_from_root(B, rho, data_distribution, device, dtype, generator)
+    x_C = _expand_block_from_root(C, rho, data_distribution, device, dtype, generator)
+    x_D = _expand_block_from_root(D, rho, data_distribution, device, dtype, generator)
+    x = torch.cat([x_A, x_B, x_C, x_D], dim=1)  # (n, 32)
+
+    # Recompute targets from x (ground truth, not from latents)
+    A_x = x[:, :8].prod(dim=1)
+    B_x = x[:, 8:16].prod(dim=1)
+    C_x = x[:, 16:24].prod(dim=1)
+    D_x = x[:, 24:32].prod(dim=1)
+    targets = torch.stack([A_x * B_x, A_x * C_x, A_x * D_x], dim=1)
+
+    return x.to(dtype=dtype), targets.to(dtype=dtype)
+
+
+def make_reuse_star_dataset(
+    n: int,
+    rho: float,
+    data_distribution: str,
+    device: torch.device,
+    dtype: torch.dtype,
+    generator: torch.Generator | None = None,
+) -> ParityDataset:
+    """Fixed dataset for the reuse-star task; y has shape (n, 3)."""
+    x, targets = sample_reuse_star_inputs(n, rho, data_distribution, device, dtype, generator)
+    return ParityDataset(x=x, y=targets)

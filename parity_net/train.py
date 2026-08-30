@@ -21,16 +21,22 @@ from .checkpoint import save_checkpoint
 from .config import ExperimentConfig, OptimizerConfig, load_config, save_config, write_default_config
 from .data import (
     ParityDataset,
+    REUSE_STAR_TARGET_NAMES,
+    REUSE_STAR_TARGET_SUPPORTS,
+    REUSE_STAR_SHARED_SUPPORT,
+    REUSE_STAR_PRIVATE_SUPPORTS,
     degree_slices_for_targets,
     exclusion_keys,
     labels_from_inputs,
     make_dataset,
     make_hierarchical_dataset,
     make_hierarchical_degree2_dataset,
+    make_reuse_star_dataset,
     make_uniform_eval_dataset,
     sample_hierarchical_degree2_inputs,
     sample_hierarchical_inputs,
     sample_inputs_excluding,
+    sample_reuse_star_inputs,
     sample_unique_inputs_excluding,
     save_dataset,
     target_names,
@@ -181,6 +187,8 @@ def train_set_metrics(
 
 
 def train(config: ExperimentConfig) -> Path:
+    if config.task.task_type == "reuse_star":
+        return _train_reuse_star(config)
     training = config.training
     model_config = config.model
     task_config = config.task
@@ -688,6 +696,276 @@ def train(config: ExperimentConfig) -> Path:
         step=training.num_steps,
         config=config,
         metrics=final_metrics,
+        test_data_path=test_data_path,
+    )
+    if writer is not None:
+        writer.close()
+    return final_path
+
+
+def _train_reuse_star(config: ExperimentConfig) -> Path:
+    """Training loop for the reuse-star task (three degree-16 targets sharing A).
+
+    Architecture: 3-output head, fixed for all m. Loss is averaged over the m
+    active targets only (controlled by task_config.num_reuse_targets).
+    Data generation never depends on m — only the loss mask changes.
+    """
+    training = config.training
+    model_config = config.model
+    task_config = config.task
+    device = resolve_device(training.device)
+    dtype = resolve_dtype(training.dtype)
+    apply_matmul_precision(training.matmul_precision)
+    torch.manual_seed(training.seed)
+
+    m = task_config.num_reuse_targets
+    if not 1 <= m <= 3:
+        raise ValueError(f"num_reuse_targets must be 1, 2, or 3; got {m}")
+
+    rho = task_config.data_rho
+    data_dist = task_config.data_distribution
+    use_nonuniform = rho > 0.0 and data_dist != "uniform"
+
+    # Active-target mask: first m targets are active, the rest get zero weight.
+    active_mask = torch.zeros(3, device=device, dtype=dtype)
+    active_mask[:m] = 1.0
+
+    output_dir = Path(training.output_dir)
+    ckpt_dir = output_dir / "checkpoints"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    save_config(config, output_dir / "config.yaml")
+
+    writer = None
+    if _HAS_TENSORBOARD:
+        writer = _SummaryWriter(str(output_dir / "tb_logs"))
+        layout = {
+            "Active-target MSE": {
+                "train": ["Multiline", ["train/active"]],
+                "eval_uniform": ["Multiline", ["eval_uniform/active/loss"]],
+                "eval_nonuniform": ["Multiline", ["eval_nonuniform/active/loss"]],
+            },
+            "Active-target accuracy": {
+                "eval_uniform": ["Multiline", ["eval_uniform/active/acc"]],
+                "eval_nonuniform": ["Multiline", ["eval_nonuniform/active/acc"]],
+            },
+            "Per-target loss (uniform eval)": {
+                k: ["Multiline", [f"eval_uniform/{k}/loss"]]
+                for k in REUSE_STAR_TARGET_NAMES
+            },
+            "Generalization gap": {
+                "loss_gap": ["Multiline", ["eval_gap/active/loss"]],
+                "acc_gap":  ["Multiline", ["eval_gap/active/acc"]],
+            },
+        }
+        writer.add_custom_scalars(layout)
+
+    # --- Evaluation datasets (fixed for the whole run) -------------------------
+    gen_eval_unif = torch.Generator(device=device)
+    gen_eval_unif.manual_seed(training.seed + 1_000_001)
+    n_eval = max(training.test_samples, 2 ** 15)
+    eval_uniform_ds = make_reuse_star_dataset(n_eval, 0.0, "uniform", device, dtype, gen_eval_unif)
+    eval_uniform_path = output_dir / "eval_uniform.pt"
+    torch.save(
+        {
+            "x": eval_uniform_ds.x.cpu(), "y": eval_uniform_ds.y.cpu(),
+            "rho": 0.0, "kind": "reuse_star_uniform",
+            "num_reuse_targets": m,
+            "target_supports": REUSE_STAR_TARGET_SUPPORTS,
+            "shared_support": REUSE_STAR_SHARED_SUPPORT,
+            "private_supports": REUSE_STAR_PRIVATE_SUPPORTS,
+        },
+        eval_uniform_path,
+    )
+
+    eval_nonuniform_ds: ParityDataset | None = None
+    eval_nonuniform_path: Path | None = None
+    if use_nonuniform:
+        gen_eval_nu = torch.Generator(device=device)
+        gen_eval_nu.manual_seed(training.seed + 2_000_003)
+        eval_nonuniform_ds = make_reuse_star_dataset(n_eval, rho, data_dist, device, dtype, gen_eval_nu)
+        eval_nonuniform_path = output_dir / "eval_nonuniform.pt"
+        torch.save(
+            {
+                "x": eval_nonuniform_ds.x.cpu(), "y": eval_nonuniform_ds.y.cpu(),
+                "rho": rho, "kind": f"reuse_star_{data_dist}",
+                "num_reuse_targets": m,
+                "target_supports": REUSE_STAR_TARGET_SUPPORTS,
+                "shared_support": REUSE_STAR_SHARED_SUPPORT,
+                "private_supports": REUSE_STAR_PRIVATE_SUPPORTS,
+            },
+            eval_nonuniform_path,
+        )
+
+    # --- Test dataset (standard iid sample for training evaluation) ------------
+    gen_test = torch.Generator(device=device)
+    gen_test.manual_seed(training.seed + 3_000_007)
+    test_ds = make_reuse_star_dataset(training.test_samples, rho if use_nonuniform else 0.0,
+                                      data_dist if use_nonuniform else "uniform", device, dtype, gen_test)
+    test_data_path = output_dir / "test_data.pt"
+    save_dataset(test_ds, test_data_path)
+
+    # --- Fixed training pool (when train_samples is set) ----------------------
+    train_data: ParityDataset | None = None
+    train_batch_size = training.batch_size
+    if training.train_samples is not None:
+        gen_train = torch.Generator(device=device)
+        gen_train.manual_seed(training.seed)
+        train_x, train_y = sample_reuse_star_inputs(
+            training.train_samples, rho if use_nonuniform else 0.0,
+            data_dist if use_nonuniform else "uniform", device, dtype, gen_train,
+        )
+        train_data = ParityDataset(x=train_x, y=train_y)
+        save_dataset(train_data, output_dir / "train_data.pt")
+        if train_data.x.shape[0] < train_batch_size:
+            train_batch_size = train_data.x.shape[0]
+
+    # --- Model -----------------------------------------------------------------
+    model = build_model(
+        model_config,
+        output_dim=3,
+        target_names_=REUSE_STAR_TARGET_NAMES,
+    ).to(device=device, dtype=dtype)
+    optimizer = build_optimizer(model, training.optimizer)
+
+    barrier_c = training.barrier_c
+    if barrier_c is None:
+        barrier_c = 7.0 / model_config.N
+
+    def _eval_reuse(ds: ParityDataset) -> dict[str, float]:
+        model.eval()
+        preds = []
+        with torch.no_grad():
+            for start in range(0, ds.x.shape[0], training.batch_size):
+                preds.append(model(ds.x[start:start + training.batch_size]))
+        pred = torch.cat(preds, dim=0)  # (n, 3)
+        y = ds.y
+        out: dict[str, float] = {}
+        for j, name in enumerate(REUSE_STAR_TARGET_NAMES):
+            out[f"{name}/loss"] = F.mse_loss(pred[:, j], y[:, j]).item()
+            out[f"{name}/acc"]  = ((pred[:, j] * y[:, j]) > 0).float().mean().item()
+        # Active mean
+        active_losses = torch.tensor([out[f"{k}/loss"] for k in REUSE_STAR_TARGET_NAMES[:m]])
+        active_accs   = torch.tensor([out[f"{k}/acc"]  for k in REUSE_STAR_TARGET_NAMES[:m]])
+        out["active/loss"] = active_losses.mean().item()
+        out["active/acc"]  = active_accs.mean().item()
+        return out
+
+    history = []
+    epoch_order = torch.empty(0, device=device, dtype=torch.long)
+    epoch_cursor = 0
+    start_time = time.perf_counter()
+    progress = tqdm(
+        range(1, training.num_steps + 1),
+        total=training.num_steps, desc="training", unit="step", dynamic_ncols=True,
+    )
+    for step in progress:
+        model.train()
+        if train_data is None:
+            x_batch, y_batch = sample_reuse_star_inputs(
+                training.batch_size,
+                rho if use_nonuniform else 0.0,
+                data_dist if use_nonuniform else "uniform",
+                device, dtype,
+            )
+        else:
+            if epoch_cursor + train_batch_size > epoch_order.numel():
+                epoch_order = torch.randperm(train_data.x.shape[0], device=device)
+                epoch_cursor = 0
+            idx = epoch_order[epoch_cursor:epoch_cursor + train_batch_size]
+            epoch_cursor += train_batch_size
+            x_batch = train_data.x[idx]
+            y_batch = train_data.y[idx]
+
+        optimizer.zero_grad(set_to_none=True)
+        pred = model(x_batch)  # (batch, 3)
+        barrier = torch.zeros((), device=device, dtype=dtype)
+        if model_config.use_readout_barrier:
+            barrier = model.readout_barrier(barrier_c, training.barrier_lambda)
+        # Mean MSE over active targets only
+        per_target_mse = F.mse_loss(pred, y_batch, reduction="none").mean(dim=0)  # (3,)
+        mse = (per_target_mse * active_mask).sum() / active_mask.sum()
+        loss = mse + barrier
+        loss.backward()
+        optimizer.step()
+
+        progress.set_postfix(train_mse=f"{mse.item():.4g}", barrier=f"{barrier.item():.4g}")
+
+        should_validate   = training.validate_every   and step % training.validate_every   == 0
+        should_checkpoint = training.checkpoint_every and step % training.checkpoint_every == 0
+
+        if training.progress_every and step % training.progress_every == 0 and not should_validate:
+            tqdm.write(
+                f"step {step}: train_mse={mse.item():.4g} loss={loss.item():.4g} "
+                f"elapsed={time.perf_counter() - start_time:.1f}s"
+            )
+
+        metrics = None
+        if should_validate or should_checkpoint:
+            m_test = _eval_reuse(test_ds)
+            m_uniform = _eval_reuse(eval_uniform_ds)
+            m_nonuniform = _eval_reuse(eval_nonuniform_ds) if eval_nonuniform_ds is not None else {}
+
+            row = {
+                "step": step,
+                "elapsed_seconds": time.perf_counter() - start_time,
+                "train_mse": mse.item(),
+                "barrier": barrier.item(),
+                "loss": loss.item(),
+                "num_reuse_targets": m,
+                "rho": rho,
+                **{f"test_{k}": v for k, v in m_test.items()},
+                **{f"eval_uniform_{k}": v for k, v in m_uniform.items()},
+                **{f"eval_nonuniform_{k}": v for k, v in m_nonuniform.items()},
+            }
+            history.append(row)
+            pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)
+            tqdm.write(str(row))
+            metrics = {f"test_{k}": v for k, v in m_test.items()}
+
+            if writer is not None:
+                writer.add_scalar("train/active", mse.item(), step)
+                for name in REUSE_STAR_TARGET_NAMES:
+                    writer.add_scalar(f"eval_uniform/{name}/loss", m_uniform[f"{name}/loss"], step)
+                    writer.add_scalar(f"eval_uniform/{name}/acc",  m_uniform[f"{name}/acc"],  step)
+                writer.add_scalar("eval_uniform/active/loss", m_uniform["active/loss"], step)
+                writer.add_scalar("eval_uniform/active/acc",  m_uniform["active/acc"],  step)
+                if eval_nonuniform_ds is not None:
+                    for name in REUSE_STAR_TARGET_NAMES:
+                        writer.add_scalar(f"eval_nonuniform/{name}/loss", m_nonuniform[f"{name}/loss"], step)
+                        writer.add_scalar(f"eval_nonuniform/{name}/acc",  m_nonuniform[f"{name}/acc"],  step)
+                    writer.add_scalar("eval_nonuniform/active/loss", m_nonuniform["active/loss"], step)
+                    writer.add_scalar("eval_nonuniform/active/acc",  m_nonuniform["active/acc"],  step)
+                    writer.add_scalar("eval_gap/active/loss",
+                                      m_uniform["active/loss"] - m_nonuniform["active/loss"], step)
+                    writer.add_scalar("eval_gap/active/acc",
+                                      m_nonuniform["active/acc"] - m_uniform["active/acc"], step)
+
+        if should_checkpoint:
+            save_checkpoint(
+                ckpt_dir / f"step_{step:08d}.pt",
+                model=model, optimizer=optimizer, epoch=0, step=step,
+                config=config, metrics=metrics, test_data_path=test_data_path,
+            )
+
+    final_path = ckpt_dir / "final.pt"
+    m_final = _eval_reuse(test_ds)
+    m_uniform_final = _eval_reuse(eval_uniform_ds)
+    m_nonuniform_final = _eval_reuse(eval_nonuniform_ds) if eval_nonuniform_ds is not None else {}
+    final_row = {
+        "step": training.num_steps,
+        "elapsed_seconds": time.perf_counter() - start_time,
+        "num_reuse_targets": m, "rho": rho,
+        **{f"test_{k}": v for k, v in m_final.items()},
+        **{f"eval_uniform_{k}": v for k, v in m_uniform_final.items()},
+        **{f"eval_nonuniform_{k}": v for k, v in m_nonuniform_final.items()},
+    }
+    history.append(final_row)
+    pd.DataFrame(history).to_csv(output_dir / "metrics.csv", index=False)
+    save_checkpoint(
+        final_path, model=model, optimizer=optimizer, epoch=0,
+        step=training.num_steps, config=config,
+        metrics={f"test_{k}": v for k, v in m_final.items()},
         test_data_path=test_data_path,
     )
     if writer is not None:

@@ -58,6 +58,11 @@ class TaskConfig:
     # All lower-degree auxiliary targets are excluded from the loss even if they appear
     # in exclude_targets; this makes non-uniform experiments explicit and safe.
     train_only_root: bool = False
+    # Reuse-star task parameters (only used when task_type == "reuse_star").
+    #   task_type        – "tree_parity" (default) or "reuse_star"
+    #   num_reuse_targets– m in {1,2,3}: how many of [S1,S2,S3] are active in the loss
+    task_type: str = "tree_parity"
+    num_reuse_targets: int = 3
 
 
 @dataclass
