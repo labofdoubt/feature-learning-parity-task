@@ -1,0 +1,105 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1.6cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{2pt}\setlength{\parindent}{0pt}
+
+\title{\vspace{-1.4cm}Self-regulating accessibility: the unfrozen $d2{+}d4$ network never
+enters the compositional phase\\
+\large interpolation from frozen-$d2$ to fully simultaneous training --- 7 pretraining
+durations $\times$ 8 global $\lambda$ $\times$ 3 seeds}
+\author{}\date{\vspace{-1.2cm}}
+
+\begin{document}\maketitle\vspace{-1.9cm}
+
+\section*{Design}
+Same 4-bit, full-cube, two-block ReLU residual setup as the frozen experiments
+($N{=}1024$, init variance $1/N$, exact Walsh, full-batch SGD). \textbf{Phase 1} pretrains
+\emph{everything} (embedding, both blocks, 3-output readout with the $d4$ head masked) on the
+parents $x_1x_2,\,x_3x_4$ with $\lambda=0$, saving checkpoints (parameters \emph{and} momentum
+buffers). \textbf{Phase 2} resumes from each checkpoint with $d4$ supervision on, the $d2$
+losses kept, \emph{all layers trainable}, and a global weight decay
+$\lambda\in\{0,10^{-4},3{\cdot}10^{-4},10^{-3},3{\cdot}10^{-3},10^{-2},3{\cdot}10^{-2},10^{-1}\}$
+on all four weight matrices; within a seed every $\lambda$ starts from the identical training
+state. Circuits are classified from block-2 pre-activation Walsh shares as before.
+
+A design fact discovered at launch: \textbf{$R_0=Q_2/Q_1$ at the input to block 2 is not freely
+dialable when nothing is frozen}. Random ReLU features already give $R_0\approx0.19$ at
+initialization, and converged $d2$ pretraining saturates at $R_0\approx0.33$ --- the
+$1{+}1\!\to\!2$ corner units emit singletons of the same per-neuron magnitude as their pair, so
+$Q_1$ grows in lockstep with $Q_2$, capping $R_0$ \emph{below} $R_c=1/\sqrt8\approx0.354$
+(with a brief overshoot to $0.34$ at $t_{\rm pre}\!\approx\!40$). Pretraining \emph{duration}
+($t_{\rm pre}\in\{0,5,15,40,100,400,10^4\}$, from fully simultaneous to fully converged) is
+therefore the controlled axis, and $R_0$ the measured covariate.
+
+\section*{Findings}
+\textbf{1. The direct circuit wins everywhere.} Across all 168 cells the compositional fraction
+never exceeds $f_{2+2}=0.084$, while $d4$ is always solved ($\min|\hat f_4|=0.85$, no
+failures). The $(R_0,\lambda)$ phase diagram (Fig.~\ref{fig:phase}, left) is uniformly in the
+$1^4$ phase.
+
+\textbf{2. Pretraining history washes out.} At $\lambda=0$, $f_{2+2}$ moves only
+$0.044\to0.060$ between $t_{\rm pre}=0$ and $t_{\rm pre}=10^4$, although $R_0$ spans
+$0.19\to0.34$. All conditions converge to the \emph{same} $R_{\rm final}\approx0.31$: whatever
+the starting accessibility, joint training drives the representation to one fixed point below
+$R_c$ (Fig.~\ref{fig:plane} --- trajectories from both directions meet in the same band,
+never approaching $R_c$).
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.495\textwidth]{phase_R0.pdf}\hfill
+\includegraphics[width=0.495\textwidth]{phase_Rfinal.pdf}\vspace{-4pt}
+\caption{Phase diagrams of the unfrozen experiment vs.\ $R_0$ (left) and $R_{\rm final}$
+(right); color = mean $f_{2+2}$ on the same scale as the frozen-case diagram. Everything stays
+in the $1^4$ (blue) phase, left of $R_c$ (red). Note in the right panel how increasing
+$\lambda$ \emph{lowers} $R_{\rm final}$ while all pretraining durations collapse onto nearly
+the same point per $\lambda$.}
+\label{fig:phase}
+\end{figure}
+
+\textbf{3. Global decay lowers accessibility --- the opposite of its frozen-case role.} With
+$\lambda$ acting on $V^{(1)}$ too, decay prunes the corner machinery to the minimum that still
+solves $d2$: $\|V^{(1)}\|_F$ falls $32\to1.8$ and $R_{\rm final}$ falls $0.32\to0.21$ as
+$\lambda\!:0\to10^{-1}$ --- an inverse $\alpha$-rescaling. Consequently $f_{2+2}$ hits exactly
+$0$ by $\lambda=3{\cdot}10^{-3}$. In the frozen setup $\lambda$ sharpened the compositional
+phase right of $R_c$; here it destroys the conditions for it.
+
+\textbf{4. Frozen and unfrozen collapse against $R_{\rm final}$, not against $R_0$.} At matched
+$(R_{\rm final},\lambda)$ the two experiments agree quantitatively --- e.g.\ at $\lambda=0$,
+unfrozen $f_{2+2}=0.060$ at $R_{\rm final}=0.32$ vs.\ frozen $0.052$ at $R=0.32$; at
+$\lambda\geq3{\cdot}10^{-3}$ both give $\approx0$ for $R\leq0.32$. Against $R_0$ they disagree
+strongly: frozen at $R=0.34,\ \lambda=3{\cdot}10^{-3}$ would give $f_{2+2}\approx0.3$--$0.4$,
+the unfrozen network gives $0.000$. In the spec's terms: \textbf{representation adaptation
+during $d4$ learning explains the difference} --- accessibility remains the governing variable,
+but it must be evaluated on the final, self-consistently adapted representation.
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.58\textwidth]{phase_plane.pdf}\vspace{-4pt}
+\caption{Phase-plane trajectories $R(t)$ vs.\ $f_{2+2}(t)$ for representative conditions
+(seed 0; $\circ$ start, $\blacksquare$ end). Cold colors start from scratch ($R_0=0.19$) and
+drift right; warm colors start pretrained ($R_0\approx0.33$) and, under decay, drift left ---
+all end in the same sub-critical, low-$f_{2+2}$ band. $R(t)$ never crosses $R_c$.}
+\label{fig:plane}
+\end{figure}
+
+
+
+
+
+\textbf{Conclusion.} In this task the compositional $2{+}2$ phase is reachable only with an
+externally pinned (frozen or rescaled) representation. Left to its own dynamics the network
+self-regulates to $R<R_c$ --- corner units cannot help emitting the singletons that dilute
+their own pair advantage --- and weight decay, applied globally, reinforces the direct route by
+shrinking the parent amplitudes themselves. A compositional phase under joint training would
+require either parents whose production does not carry singleton by-products, deeper targets
+(where the direct route's $\eta\propto Q_1/2^p$ collapses faster), or decay that spares the
+representation-carrying layers.
+
+\vspace{2pt}\footnotesize
+Artifacts: \texttt{gdrive:parity/analysis\_output/accessibility\_unfrozen/}
+(\texttt{results.csv}, \texttt{trajectories.csv}, \texttt{pretrain.json}, figures incl.\
+\texttt{trajectories\_panels.pdf}, this report); code:
+\texttt{analysis/accessibility/run\_unfrozen\_experiment.py}. Companions:
+\texttt{accessibility\_report.pdf}, \texttt{accessibility\_wd\_report.pdf}.
+\end{document}

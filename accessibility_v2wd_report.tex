@@ -1,0 +1,99 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1.6cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{2pt}\setlength{\parindent}{0pt}
+
+\title{\vspace{-1.4cm}Block-2--only weight decay reverses the story:\\
+protected parents, rising $R(t)$, and decay that again favors composition\\
+\large exp.~6 --- identical to exp.~4 except phase-2 $\lambda$ acts on $V_2$ only ---
+8 $\alpha$ $\times$ 8 $\lambda$ $\times$ 3 seeds}
+\author{}\date{\vspace{-1.2cm}}
+
+\begin{document}\maketitle\vspace{-1.9cm}
+
+\section*{Design}
+Identical to exp.~4 (converged-$d2$ pretrain, $V_1\!\to\!\alpha V_1$ at $d4$ onset setting
+$R_0\in[0.04,0.57]$, everything trainable, $d2$ losses kept, fresh optimizer, exact Walsh,
+per-cell measurements every 500 steps) with \textbf{one change}: the phase-2 weight decay is
+applied \emph{only to the second-block weights $V_2$}; embedding, $V_1$ and readout are
+decay-free. The circuit under study is thus regularized, while the representation that feeds it
+is protected --- the control that exp.~4 identified as missing. The 10k pretraining checkpoints
+are saved per seed (\texttt{accessibility\_ckpts/}, also on Drive). Every cell solves $d4$
+($|\hat f_4|=1.000$ throughout).
+
+\section*{Findings}
+\textbf{1. Decay again favors the compositional circuit, with the boundary at $R_c$.} Right of
+$R_c$ the parent share now \emph{grows} with $\lambda$: at $R_0=0.52$,
+$f_{2+2}=0.103\;(\lambda{=}0)\to0.175\;(10^{-3})\to0.230\;(10^{-2})\to0.385\;(3{\cdot}10^{-2})$;
+left of $R_c$ it stays $\leq0.01$ at every $\lambda$ (Figs.~\ref{fig:phase},~\ref{fig:drift}
+left). This is the frozen-case direction restored --- global decay (exp.~4) drove the same
+cells to $f_{2+2}=0$. The magnitude still trails the frozen benchmark ($0.385$ vs.\ $0.90$ at
+matched $R,\lambda$): with the task solved within the first few hundred steps, the early
+singleton lock-in owns most of the output, and $V_2$-decay reworks only part of it.
+
+\textbf{2. The representation drift reverses.} With $V_1$ protected, $\lambda$ now pushes
+$R_{\rm final}$ \emph{up}, not down (Fig.~\ref{fig:drift}, right): from $R_0=0.04$,
+$R_{\rm final}$ rises $0.14\to0.29$ as $\lambda\!:0\to10^{-2}$; supercritical starts stay
+supercritical at every $\lambda$ ($R_{\rm final}\approx0.41$--$0.46$ at $R_0=0.52$, vs.\
+$0.21$ under global decay). Mechanically: taxing block-2 circuits shifts gradient pressure
+into the untaxed $V_1$/embedding, strengthening the parents --- the opposite of exp.~4's
+inverse-$\alpha$ erosion.
+
+\textbf{3. No dismantling transients.} The phase plane (Fig.~\ref{fig:plane}) shows
+trajectories moving \emph{up} in $f_{2+2}$ under decay (ends above starts), never the
+build-then-demolish loops of exp.~4: with $R(t)$ held supercritical, decay works \emph{for}
+the compositional circuit throughout training.
+
+\textbf{4. Strong decay exits through a different door.} At $\lambda=10^{-1}$ (all cells) and
+a few at $3{\cdot}10^{-2}$, block~2 is suppressed entirely --- no neuron contributes to $d4$
+($n_{\rm rel}=0$; NaN cells, dropped from the diagrams) --- yet $\hat f_4=1.0$: the readout
+solves the task directly from the frozen stream's own $d4$ leak
+($\|q_{1234}\|\approx0.105\,\alpha$ from the block-1 corner units), the same bypass seen at
+$\alpha=8$ in the frozen experiment. The ``circuit choice'' question dissolves there rather
+than being answered.
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.49\textwidth]{v2_phase_R0.pdf}\hfill
+\includegraphics[width=0.49\textwidth]{v2_phase_Rfinal.pdf}\vspace{-4pt}
+\caption{Phase diagrams vs.\ $R_0$ (left) and $R_{\rm final}$ (right), colors on the same
+scale as exps.~2/4. Right of $R_c$ the color now deepens toward composition as $\lambda$
+grows (up the page); missing squares in the top rows are the block-2--bypassed (NaN) cells.}
+\label{fig:phase}
+\end{figure}
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.49\textwidth]{v2_cuts_fixed_lambda.pdf}\hfill
+\includegraphics[width=0.49\textwidth]{v2_drift.pdf}\vspace{-4pt}
+\caption{Left: $f_{2+2}$ vs.\ $R_0$ at fixed $\lambda$ --- ordered by $\lambda$ right of
+$R_c$ (compare exp.~4, where the order was reversed and collapsed to 0). Right: drift map ---
+$\lambda$ raises $R_{\rm final}$ everywhere; supercritical stays supercritical.}
+\label{fig:drift}
+\end{figure}
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.98\textwidth]{v2_phase_plane.pdf}\vspace{-4pt}
+\caption{Phase-plane trajectories (seed 0; $\circ$ start, $\blacksquare$ end). Unlike exp.~4
+there are no dismantling loops: under $V_2$-decay, $f_{2+2}$ grows along the trajectory and
+$R(t)$ never collapses.}
+\label{fig:plane}
+\end{figure}
+
+\textbf{Bottom line.} Exp.~4's conclusion sharpens: unfrozen dynamics per se do not kill the
+compositional phase --- \emph{decay on the representation} does. Protecting $V_1$ restores
+weight decay's frozen-case role qualitatively (sharpening toward the efficient circuit, pinned
+at $R_c$, now with the representation itself drifting upward in accessibility). The remaining
+factor-$\sim$2 gap to the frozen benchmark is purely dynamical --- the direct circuit forms
+first and is only partially reworked --- so closing it should require slowing $d4$ learning
+(smaller readout lr) or annealed decay, not more decay.
+
+\vspace{2pt}\footnotesize
+Artifacts: \texttt{gdrive:parity/analysis\_output/accessibility\_alpha\_v2wd/}
+(\texttt{results\_merged.csv}, 12 worker slices, trajectories, figures, this report);
+checkpoints: \texttt{accessibility\_ckpts/pretrain10k\_seed\{0,1,2\}.pt}; code:
+\texttt{analysis/accessibility/run\_alpha\_unfrozen\_experiment.py} (\texttt{--wd-block2-only}),
+\texttt{merge\_alpha\_unfrozen.py}, \texttt{scripts/launch\_v2wd\_workers.sh}. Companions:
+exps.~1--4 reports.
+\end{document}

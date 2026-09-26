@@ -1,0 +1,101 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1.6cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{2pt}\setlength{\parindent}{0pt}
+
+\title{\vspace{-1.4cm}$\alpha$-controlled initial accessibility under unfrozen dynamics:\\
+circuits track $R(t)$, and global decay drags both below the boundary\\
+\large converged-$d2$ pretrain, $V_1\!\to\!\alpha V_1$ at $d4$ onset, everything trainable ---
+8 $\alpha$ $\times$ 8 $\lambda$ $\times$ 3 seeds}
+\author{}\date{\vspace{-1.2cm}}
+
+\begin{document}\maketitle\vspace{-1.9cm}
+
+\section*{Design}
+Same 4-bit, full-cube, two-block ReLU setup ($N{=}1024$, init var $1/N$, exact Walsh). Phase 1
+pretrains the whole network on the parents to machine precision ($\lambda=0$, $10^4$ steps).
+At $d4$ onset the block-1 weights are rescaled $V_1\!\to\!\alpha V_1$,
+$\alpha\in\{0.1,\dots,4\}$, setting the \emph{measured} initial accessibility
+$R_0=Q_2/Q_1\in[0.04,0.58]$ on both sides of $R_c=1/\sqrt8\approx0.354$ --- the unfrozen
+analogue of the frozen $\alpha$-sweep. Phase 2 trains \emph{everything} ($d2$ losses kept,
+fresh optimizer) under a global weight decay
+$\lambda\in\{0,10^{-4},\dots,10^{-1}\}$ applied to all four matrices, identical initial state
+across $\lambda$ within $(\mathrm{seed},\alpha)$. $R(t)$ and the pre-activation--based circuit
+fractions are recorded every 500 steps. Every cell solves $d4$ ($|\hat f_4|\geq0.85$; no
+failures).
+
+\section*{Findings}
+\textbf{1. No compositional phase forms --- initial accessibility biases, but does not select.}
+Even from $R_0=0.58$, well above $R_c$, the final parent share only reaches
+$f_{2+2}=0.10$ ($\lambda=0$) or $0.15$ ($\lambda=10^{-4}$), and the $f_{2+2}(R_0)$ curves
+(Fig.~\ref{fig:drift}, left) rise \emph{smoothly} through $R_c$ with no transition --- in stark
+contrast to the frozen case, where the same $R$ values give a near-step to $f_{2+2}\approx0.9$.
+For $\lambda\geq3{\cdot}10^{-3}$, $f_{2+2}=0$ everywhere (Fig.~\ref{fig:phase}).
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.49\textwidth]{phase_R0.pdf}\hfill
+\includegraphics[width=0.49\textwidth]{phase_Rfinal.pdf}\vspace{-4pt}
+\caption{Phase diagrams vs.\ $R_0$ (left) and $R_{\rm final}$ (right), same color scale as the
+frozen-case diagram: uniformly in the direct ($1^4$) phase; the mild light-blue gradient at
+$\lambda\leq10^{-4}$ is the residual imprint of $R_0$.}
+\label{fig:phase}
+\end{figure}
+
+\textbf{2. The drift direction depends on the initial value --- until decay takes over.}
+The drift map (Fig.~\ref{fig:drift}) shows $R_{\rm final}$ vs.\ $R_0$: at $\lambda=0$ the
+curve crosses the diagonal near $R_0\approx0.28$ --- representations drift \emph{up} from
+below and \emph{down} from above, toward a broad band --- and supercritical starts \emph{stay}
+supercritical ($R_{\rm final}$ up to $0.47$) while still building a mostly-direct circuit. For
+$\lambda\geq10^{-3}$ the curves flatten: the decay fixed point $R^*\approx0.21$--$0.29$
+swallows every initial condition, erasing $\alpha$ entirely.
+
+\textbf{3. The circuit tracks $R(t)$, with no hysteresis.} The phase plane
+(Fig.~\ref{fig:plane}) shows why the final states are direct: at moderate decay
+($\lambda=3{\cdot}10^{-3}$), supercritical starts first \emph{build} a compositional
+component --- $f_{2+2}$ transiently peaks at $\approx0.23$ while $R(t)$ slides left --- and
+the moment $R(t)$ crosses $R_c$ the $2{+}2$ circuit is dismantled and rebuilt as $1^4$,
+ending at $f_{2+2}=0$, $R\approx0.23$. At $\lambda=0$ trajectories barely move: circuits form
+within the first few hundred steps near $R_0$ and freeze there. Selection is governed by the
+\emph{instantaneous} accessibility during formation, not by $R_0$ or $R_{\rm final}$ alone.
+
+\textbf{4. Where the static picture survives.} At $\lambda\leq10^{-4}$ the unfrozen points
+land near the frozen curve when compared at $R_{\rm final}$ (e.g.\ unfrozen
+$f_{2+2}=0.10$ at $R_{\rm final}=0.41$ vs.\ frozen $0.125$ at $R=0.38$) --- an approximate
+collapse. At larger $\lambda$ the comparison becomes ill-posed: $R$ moves substantially
+\emph{during} circuit formation, and only the trajectory explains the outcome. The frozen
+experiments' sharp $R_c$ transition is thus a property of \emph{pinned} representations;
+unfrozen dynamics soften it from above (drift) and below (early circuit lock-in).
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.49\textwidth]{cuts_fixed_lambda.pdf}\hfill
+\includegraphics[width=0.49\textwidth]{drift.pdf}\vspace{-4pt}
+\caption{Left: $f_{2+2}$ vs.\ $R_0$ at fixed $\lambda$ --- smooth growth through $R_c$, no
+transition, maximum $0.15$. Right: representation drift $R_{\rm final}(R_0)$ per $\lambda$
+(dotted: no drift; red: $R_c$). At $\lambda=0$ the curve crosses the diagonal near $0.28$
+(bidirectional drift; supercritical starts stay supercritical); for $\lambda\geq10^{-3}$ a
+$\lambda$-set fixed point $R^*\approx0.21$--$0.29$ erases the initial condition.}
+\label{fig:drift}
+\end{figure}
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.98\textwidth]{phase_plane.pdf}\vspace{-4pt}
+\caption{Phase-plane trajectories $R(t)$ vs.\ $f_{2+2}(t)$ (seed 0; $\circ$ start,
+$\blacksquare$ end; color = $\alpha$). Left, $\lambda=0$: near-static --- circuits lock in
+close to $R_0$. Middle/right, $\lambda=3{\cdot}10^{-3}/3{\cdot}10^{-2}$: supercritical starts
+grow a transient $2{+}2$ fraction, then lose it as decay pulls $R(t)$ across $R_c$; all end
+direct at $R^*$.}
+\label{fig:plane}
+\end{figure}
+
+\vspace{2pt}\footnotesize
+Artifacts: \texttt{gdrive:parity/analysis\_output/accessibility\_alpha\_unfrozen/}
+(\texttt{results\_merged.csv}, per-slice results/trajectories, figures, this report); code:
+\texttt{analysis/accessibility/run\_alpha\_unfrozen\_experiment.py},
+\texttt{merge\_alpha\_unfrozen.py}. Companions: \texttt{accessibility\_report.pdf},
+\texttt{accessibility\_wd\_report.pdf}, \texttt{accessibility\_unfrozen\_report.pdf}. This
+experiment doubles as the $t_{\rm pre}{=}10^4$ column of the running $t_{\rm pre}$ sweep
+(exp.~5, norway/texas).
+\end{document}

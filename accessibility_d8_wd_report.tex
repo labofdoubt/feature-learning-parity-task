@@ -1,0 +1,121 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1.6cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{2pt}\setlength{\parindent}{0pt}
+
+\title{\vspace{-1.4cm}The $d8$ accessibility boundary at $Q_4/Q_1=5/32$:\\
+weight decay pins and sharpens the $1^8$ vs.\ $4{+}4$ transition\\
+\large frozen-$d4$ representation, 8 bits, full $2^8$ cube --- 14 accessibility conditions
+$\times$ 10 $\lambda$ $\times$ 3 seeds}
+\author{}\date{\vspace{-1.2cm}}
+
+\begin{document}\maketitle\vspace{-1.9cm}
+
+\section*{Setup}
+Direct lift of the frozen $d4$ WD experiment (\texttt{accessibility\_wd\_report.pdf}) to
+$d8$: 8 relevant bits, all $2^8=256$ inputs full-batch, two pure-ReLU residual blocks
+($N{=}1024$, init var $1/N$), same optimizer and convergence conventions. Stage~1 trains
+embedding + block~1 on the parents $x_1x_2x_3x_4,\,x_5x_6x_7x_8$ with $\lambda=0$ to
+convergence, then freezes (checkpoints saved). ReLU homogeneity
+($h_1(\alpha)=h_0+\alpha\,\mathrm{ReLU}(V_1h_0)$) plus a per-seed \textbf{pilot inversion} of
+the measured $\alpha\mapsto Q_4/Q_1$ map places conditions on 14 target ratios densely
+bracketing the theory boundary: $\eta_{1^8}=5Q_1/32\sqrt8$ vs.\ $\eta_{4+4}=Q_4/2\sqrt2$ tie at
+$Q_4/Q_1=5/32=0.15625$. Stage~2 trains a fresh block~2 + readout on $x_1\cdots x_8$ with the
+same $\lambda$ on both, $\lambda\in\{0,10^{-5},\dots,10^{-1}\}$, identical stage-2 init across
+all $(\text{ratio},\lambda)$ per seed. Circuits are classified from pre-activation Walsh shares
+over the full 255-mode basis: eight singletons ($1^8$), four relevant pairs ($2^4$), two
+relevant quads ($4{+}4$), contribution-weighted over neurons carrying $95\%$ of the $d8$
+output. Numerics: training in float32 (float64 is $\sim$64$\times$ slower at $256{\times}1024$
+on consumer GPUs), all Walsh measurement in float64.
+
+\section*{Findings}
+\textbf{1. The transition exists and, under decay, sits exactly at $5/32$.} At
+$\lambda\geq10^{-2}$ the $f_{4+4}(Q_4/Q_1)$ curves are a near-step at the theory line
+(Fig.~\ref{fig:cuts}, left): between the two conditions straddling the boundary,
+$f_{4+4}$ jumps $0.04\to0.38$ ($\lambda=10^{-2}$) and $0.46\to0.95$ ($3{\cdot}10^{-2}$)
+across $Q_4/Q_1: 0.157\to0.161$ --- a transition localized to $\pm2\%$ of the predicted value.
+Left of the line, every $\lambda$ gives $f_{4+4}\leq0.05$.
+
+\textbf{2. Without decay the transition is displaced by dynamics; decay pulls it home.} At
+$\lambda=0$ the compositional fraction rises only gradually and far to the right
+($f_{4+4}=0.43$ at $Q_4/Q_1=0.25$, $0.57$ at $0.30$): the fast-forming direct circuit
+partially locks in even when $4{+}4$ is norm-favored. Increasing $\lambda$ both sharpens the
+crossover and shifts it monotonically left onto $5/32$, saturating by
+$\lambda\approx10^{-2}$--$3{\cdot}10^{-2}$; the total stage-2 squared norm collapses
+$1057\to20$ at $Q_4/Q_1=0.167$ ($\lambda:0\to10^{-2}$) --- the minimum-norm mechanism seen in
+the $d4$ study, now selecting among three candidate routes.
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.60\textwidth]{d8_phase_diagram.pdf}\vspace{-4pt}
+\caption{Phase diagram $(Q_4/Q_1,\lambda)$, mean $4{+}4$ fraction over 3 seeds; red line:
+$5/32$. Left of the boundary stays direct (blue) at all $\lambda$; right of it the
+compositional phase (red) grows downward as $\lambda$ decreases the lock-in advantage.
+$\times$ marks $d8$ failure ($|\hat f_8|<0.5$): at $\lambda=10^{-1}$ every condition with
+$Q_4/Q_1\leq0.168$ fails while all conditions right of the boundary still solve the task
+through $4{+}4$.}
+\label{fig:phase}
+\end{figure}
+
+\textbf{3. There is a WD window where $4{+}4$ survives after $1^8$ dies.} At
+$\lambda=10^{-1}$: $|\hat f_8|=0.37$--$0.47$ (failed) for every condition with
+$Q_4/Q_1\leq0.168$, but $0.52\to0.78$ (alive, rising with $Q_4$) for $0.18\to0.30$, carried by
+$f_{4+4}=0.99$ circuits --- precisely the ordering $\lambda_c^{4+4}=e_8Q_4/2\sqrt2 >
+\lambda_c^{1^8}=5e_8Q_1/32\sqrt8$ predicts right of the boundary. The composition ladders
+(Fig.~\ref{fig:comp}) show the full sequence at $Q_4/Q_1=0.167$: pure $1^8$
+($\lambda\leq10^{-3}$) $\to$ flip to $4{+}4$ ($10^{-2}$, with $|\hat f_8|\approx0.95$ intact)
+$\to$ $d8$ suppression ($10^{-1}$). Left of the boundary (panels 1--2) there is no flip ---
+$1^8$ persists until suppression; at $0.25$ the flip completes already at $\lambda=10^{-3}$.
+
+\textbf{4. The $2^4$ route never materializes, as the measured $Q_4/Q_2$ predicts.} The frozen
+representation gives $Q_4/Q_2=0.919$, flat across the whole $\alpha$-sweep
+(Fig.~\ref{fig:ctrl}, right) --- close to the ideal-gate prediction $Q_4/Q_2\approx1$ and far
+above the $2^4$ viability threshold $1/\sqrt8\approx0.354$. Correspondingly the maximum
+$2^4$ share observed anywhere in the 420 cells is $f_{2^4}=0.029$. The pilot map
+(Fig.~\ref{fig:ctrl}, left) saturates at $Q_4/Q_1=0.402$, so all 14 targets were reachable.
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.49\textwidth]{d8_cuts_fixed_lambda.pdf}\hfill
+\includegraphics[width=0.475\textwidth]{d8_suppression.pdf}\vspace{-4pt}
+\caption{Left: $f_{4+4}$ vs.\ measured $Q_4/Q_1$ at fixed $\lambda$ --- increasing decay
+sharpens the transition and moves it onto $5/32$ (red). Right: $|\hat f_8|$ vs.\ $\lambda$
+per condition --- suppression is ordered by accessibility; the $0.5$ failure line (dotted) is
+crossed first by the low-$Q_4$ conditions.}
+\label{fig:cuts}
+\end{figure}
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.98\textwidth]{d8_composition_vs_lambda.pdf}\vspace{-4pt}
+\caption{Circuit composition vs.\ $\lambda$ at four representative accessibilities. The
+predicted ladder $1^8\to4{+}4\to$ no-$d8$ appears exactly and only right of the boundary;
+$2^4$ (green) stays at zero everywhere.}
+\label{fig:comp}
+\end{figure}
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.9\textwidth]{d8_q42_control.pdf}\vspace{-4pt}
+\caption{Controls. Left: pilot map $\alpha\mapsto Q_4/Q_1$ (all seeds overlap), crossing
+$5/32$ near $\alpha\approx0.55$ and saturating at $0.402$. Right: $Q_4/Q_2=0.919$ throughout
+--- near the ideal $1^4$-gate prediction of $1$ and far above the $2^4$ viability line
+$1/\sqrt{8}$, explaining the absent $2^4$ route.}
+\label{fig:ctrl}
+\end{figure}
+
+\textbf{Answers to the five questions.} (i)~Yes: under meaningful decay the $1^8\!\leftrightarrow\!4{+}4$
+transition sits at $Q_4/Q_1=5/32$ to within the grid spacing ($\pm2\%$). (ii)~$\lambda$ both
+sharpens the transition and removes the dynamical bias that displaces it rightward at
+$\lambda=0$. (iii)~Yes: at $\lambda=10^{-1}$ the direct route is dead everywhere while
+$4{+}4$ still learns $d8$ for $Q_4/Q_1\geq0.18$. (iv)~$d8$ learning fails at
+$\lambda\sim10^{-1}$ left of the boundary (and begins eroding from $3{\cdot}10^{-2}$), later
+the larger $Q_4$ --- the $\lambda_c=e_8\eta$ ordering. (v)~$Q_4/Q_2=0.92\approx1$ as the ideal
+$1^4$-gate spectrum predicts, and $2^4$ is correspondingly absent ($\leq0.03$ everywhere).
+
+\vspace{2pt}\footnotesize
+Artifacts: \texttt{gdrive:parity/analysis\_output/accessibility\_d8\_wd/}
+(\texttt{results\_merged.csv}, 6 worker slices, trajectories, pilots, figures, this report);
+stage-1 checkpoints in \texttt{accessibility\_ckpts/d8pre\_seed\{0,1,2\}.pt}; code:
+\texttt{analysis/accessibility/run\_d8\_wd\_experiment.py}, \texttt{merge\_d8\_wd.py}.
+Companion: \texttt{accessibility\_wd\_report.pdf} ($d4$).
+\end{document}

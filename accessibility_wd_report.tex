@@ -1,0 +1,97 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1.6cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{2pt}\setlength{\parindent}{0pt}
+
+\title{\vspace{-1.4cm}Weight decay sharpens, but does not move, the accessibility boundary\\
+\large frozen-$d2$ setup, stage-2 sweep $\lambda\in[0,10^{-1}]$ on block 2 + readout --- 8 accessibility conditions $\times$ 9 $\lambda$ $\times$ 3 seeds}
+\author{}\date{\vspace{-1.2cm}}
+
+\begin{document}\maketitle\vspace{-1.9cm}
+
+\section*{Setup}
+Identical to the frozen accessibility experiment (see \texttt{accessibility\_report.pdf}): 4 bits,
+full $2^4$ cube, two ReLU residual blocks ($N{=}1024$, all init variances $1/N$), exact Walsh
+measurements. Stage 1 trains embedding + block~1 on the parents $x_1x_2,\,x_3x_4$ with
+$\lambda=0$ to machine precision ($1{+}1\!\to\!2$ corner units, weighted singleton share
+$1.000$), then is \textbf{frozen}, so weight decay can never touch the parent modes; ReLU
+homogeneity gives frozen representations with measured $R=Q_2/Q_1\in\{0.12,\dots,0.66\}$
+bracketing $R_c=1/\sqrt8\approx0.354$. Stage 2 trains a fresh block~2 + readout on
+$x_1x_2x_3x_4$, with the \emph{same} weight decay $\lambda$ on both (the minimum-norm-theory
+setting), $\lambda\in\{0,10^{-5},10^{-4},3{\cdot}10^{-4},10^{-3},3{\cdot}10^{-3},10^{-2},
+3{\cdot}10^{-2},10^{-1}\}$, identical stage-2 initialization across all $(R,\lambda)$ within a
+seed. Circuits are classified from the Walsh decomposition of block-2 \emph{pre-activations}
+(parent share vs.\ singleton share, contribution-weighted over the neurons carrying $95\%$ of the
+$d4$ output). Every cell solves the task to $|A|\geq0.70$; no $(R,\lambda)$ in the range failed
+outright.
+
+\section*{Findings}
+\textbf{1. The boundary does not move.} Across five decades of $\lambda$ the transition stays
+pinned at $R_c$ (Figs.~\ref{fig:phase},~\ref{fig:cuts}). Below $R_c$, decay pushes the
+compositional fraction \emph{down} (at $R=0.32$: $f_{2+2}=0.052\to0.015$ as
+$\lambda\!:0\to10^{-3}$); above $R_c$ it pushes it \emph{up} (at $R=0.38$: $0.125\to0.517$;
+at $R=0.44$: $0.221\to0.904$; at $R=0.66$: $0.452\to0.994$). $\lambda$ acts as a sharpener
+around a fixed pivot --- exactly the static-theory prediction that
+$\eta_{\rm comp}/\eta_{\rm direct}$, hence the tie point, is $\lambda$-independent.
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.56\textwidth]{phase_diagram.pdf}\vspace{-4pt}
+\caption{Phase diagram: mean $2{+}2$ fraction on the $(R,\lambda)$ grid (3 seeds; bottom row
+$\lambda=0$). The boundary stays at $R_c=1/\sqrt8$ (red) for all $\lambda$; color saturates
+with increasing $\lambda$ on the right of the line and stays $\approx0$ on the left. No cell
+failed ($|A|<0.5$ never occurred).}
+\label{fig:phase}
+\end{figure}
+
+\textbf{2. Sharpening saturates.} The $f_{2+2}(R)$ curves steepen monotonically with $\lambda$
+and converge by $\lambda\approx3{\cdot}10^{-3}$ (the $\lambda=10^{-2},3{\cdot}10^{-2},10^{-1}$
+curves overlap): the crossover narrows from a gradual rise at $\lambda=0$ (only $0.45$ at
+$R=0.66$) toward a near-step, $f_{2+2}\lesssim0.02$ left of $R_c$ vs.\ $\geq0.88$ for
+$R\geq0.44$.
+
+\textbf{3. Why: decay forces the minimum-norm solution.} At $R=0.44$ the total stage-2 squared
+parameter norm collapses from $1034$ ($\lambda=0$, kitchen-sink interpolation) to $8.2$ at
+$\lambda=10^{-3}$ and $5.9$ at $10^{-1}$. At $\lambda=0$ gradient descent keeps whatever mixture
+it first finds; under decay only the norm-efficient circuit survives, which is where the
+per-unit-norm comparison $\eta=|c_4|/|v|$ actually binds. Consistently, the mixed-neuron
+fraction at $R=0.44$ drops from $0.10$ ($\lambda=0$) to $0.02$ ($\lambda\geq10^{-3}$): decay
+purifies the population into nearly binary $1^4$ vs.\ $2{+}2$ classes.
+
+\textbf{4. Suppression is ordered by accessibility, as $\lambda_c=e\eta$ predicts, but is never
+complete in range.} Amplitude stays $|A|\approx1$ through $\lambda=3{\cdot}10^{-3}$ and erodes
+beyond $10^{-2}$ (Fig.~\ref{fig:cuts}, right), monotonically in $R$: at $\lambda=10^{-1}$,
+$|A|=0.70$ at $R=0.12$ rising to $0.92$ at $R=0.66$ --- the more accessible the parents, the
+more decay the circuit tolerates. Full suppression ($\lambda_c$) lies beyond $10^{-1}$ for every
+condition here, so the predicted ``only the efficient circuit survives'' window shows up in this
+range as amplitude ordering rather than outright failure of the direct route.
+
+
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.46\textwidth]{cuts_fixed_lambda.pdf}\hfill
+\includegraphics[width=0.44\textwidth]{suppression.pdf}\vspace{-4pt}
+\caption{Left: $f_{2+2}$ vs.\ measured $R$ at fixed $\lambda$ --- all curves pivot at $R_c$;
+increasing $\lambda$ steepens the transition without moving it, saturating by
+$\lambda\approx3{\cdot}10^{-3}$. Right: $d4$ output amplitude vs.\ $\lambda$ per condition ---
+erosion starts near $\lambda\sim10^{-2}$ and is ordered by $R$ (higher accessibility $\to$
+higher tolerated decay), the direction predicted by $\lambda_c=e\eta$.}
+\label{fig:cuts}
+\end{figure}
+
+\textbf{Answers to the framing questions.} (i)~Accessibility still predicts circuit selection
+under weight decay --- better than at $\lambda=0$. (ii)~Decay strengthens the preference for the
+higher-$\eta$ circuit, saturating near $\lambda\sim3{\cdot}10^{-3}$. (iii)~The boundary remains
+at $1/\sqrt8$ throughout. (iv)~Within $\lambda\leq10^{-1}$ the inefficient circuit is weakened
+(amplitude ordering) but not yet extinguished; testing the full $\lambda_c$ hierarchy needs
+larger $\lambda$ or smaller parent amplitudes. The hidden-only decay control
+(\texttt{--hidden-only}) is implemented and not yet run.
+
+\vspace{2pt}\footnotesize
+Artifacts: \texttt{gdrive:parity/analysis\_output/accessibility\_wd/both/} (\texttt{results.csv},
+\texttt{trajectories.csv} --- per-1000-step fractions ---, \texttt{block2\_neurons.csv},
+\texttt{stage1.json}, figures, this report); code:
+\texttt{analysis/accessibility/run\_wd\_experiment.py}. Companion: \texttt{accessibility\_report.pdf}.
+\end{document}

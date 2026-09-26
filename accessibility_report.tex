@@ -1,0 +1,75 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1.6cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{2pt}\setlength{\parindent}{0pt}
+
+\title{\vspace{-1.4cm}Accessibility selects the circuit: a controlled $2{+}2\!\to\!4$ vs.\
+$1{+}1{+}1{+}1\!\to\!4$ experiment\\
+\large 4 relevant bits, full $2^4$ cube, two ReLU residual blocks, no weight decay --- exact Walsh measurements}
+\author{}\date{\vspace{-1.2cm}}
+
+\begin{document}\maketitle\vspace{-1.9cm}
+
+\section*{Question and prediction}
+When a fresh residual block learns the degree-4 parity $x_1x_2x_3x_4$, does it combine the four
+\emph{singletons} ($1^4\!\to\!4$) or the two already-built degree-2 \emph{parents}
+($2{+}2\!\to\!4$)? For a balanced $p$-parent ReLU gate, $\gamma=|v||q|/\sqrt p$ and the produced
+target coefficient is $c_p=\kappa_p\gamma$, so the production per unit hidden weight is
+$|c_p|/|v|=|\kappa_p|\,|q|/\sqrt p$: with $|\kappa_4|=\tfrac14$ the singleton route yields $Q_1/8$,
+with $|\kappa_2|=\tfrac12$ the parent route yields $Q_2/2\sqrt2$. The compositional route should
+win exactly when the \emph{measured accessibility ratio} crosses
+\begin{equation*}
+R=\frac{Q_2}{Q_1}>R_c=\frac{1}{\sqrt8}\approx0.354,\qquad
+Q_1=\|q_{\{i\}}\|,\quad Q_2=\|q_{\{i,j\}}\|,\quad
+q_S=\mathbb E_x\!\left[h(x)\chi_S(x)\right].
+\end{equation*}
+
+\section*{Protocol}
+Residual network $h^{(\ell+1)}=h^{(\ell)}+\mathrm{ReLU}(V^{(\ell)}h^{(\ell)})$, width $N=1024$,
+all weights (embedding, blocks, readout) initialized with variance $1/N$, $\lambda_{\rm wd}=0$,
+full-batch SGD on all $2^4=16$ inputs (exact expectations, float64; lr $0.01$, momentum $0.9$,
+convergence-based stopping). \textbf{Stage 1:} train embedding + block~1 on the parents
+$x_1x_2,\,x_3x_4$ to machine precision; the pair modes are produced by textbook $1{+}1\!\to\!2$
+corner units (contribution-weighted singleton share of their pre-activations $=1.000$ in every
+seed). Freeze. \textbf{Rescaling:} exploit ReLU homogeneity,
+$h_1(\alpha)=h_0+\alpha\,\mathrm{ReLU}(V_1h_0)$, and \emph{re-measure} $Q_1(\alpha),Q_2(\alpha)$
+directly --- $\alpha\in[0,8]$ maps to measured $R\in[0,0.79]$. \textbf{Stage 2:} for each
+$\alpha$ (13 values $\times$ 4 seeds), train an \emph{identically initialized} fresh block~2 +
+readout on $x_1x_2x_3x_4$. Every run reaches accuracy $1.0$ at loss $\sim\!10^{-28}$ --- the
+task is always solved; only the \emph{mechanism} changes.
+
+\textbf{Classification} is by pre-activation, not activation (both routes emit the same
+$\chi_{1234}$): for the block-2 neurons covering $95\%$ of $\sum_j|w_j c_{4,j}|$
+($c_{4,j}=\mathbb E[\mathrm{ReLU}(z_j)\chi_{1234}]$), decompose $\mathrm{Var}\,z_j$ exactly over
+the cube and take the share on the two parents vs.\ the four singletons; the reported fraction is
+the $|w_jc_{4,j}|$-weighted average of these shares.
+
+\section*{Result}
+The transition exists and sits at the predicted boundary (Fig.~\ref{fig}): for all $R\le0.27$ the
+parent share is $\le0.03$ --- block~2 is a pure singleton machine --- and the first substantial
+$2{+}2$ fraction appears at $R\approx0.38$, immediately past $R_c$ ($0.10$--$0.14$), growing to
+$\approx0.28$ at $R\approx0.47$, $\approx0.45$ at $R\approx0.6$--$0.73$, and $0.61$--$0.71$ at
+$R\approx0.77$; the singleton panel mirrors it. Seeds collapse onto a single curve: the measured
+$R$, not the seed, determines the mix. The onset is a soft crossover starting at $R_c$ (parity
+near $R\approx0.7$), as expected when two routes of near-equal efficiency are populated by
+gradient descent. \emph{Caveat:} block-1 corner units leak a small $d4$ into the frozen stream
+($\|q_{1234}\|\approx0.105\,\alpha$); by $\alpha=8$ the readout solves the task without block~2
+(no contributing neurons --- excluded), so the rightmost points describe only what block~2 adds.
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.84\textwidth]{main_transition.pdf}\vspace{-4pt}
+\caption{Fraction of $2{+}2\!\to\!4$ (left) and $1^4\!\to\!4$ (right) computation in block~2 vs.\
+the measured accessibility ratio $R=Q_2/Q_1$ of the frozen representation; red dashed:
+$R_c=1/\sqrt8$. Points: 4 seeds $\times$ 13 $\alpha$; black: mean over seeds.}
+\label{fig}
+\end{figure}
+
+\vspace{2pt}\footnotesize
+Artifacts: \texttt{gdrive:parity/analysis\_output/accessibility\_4bit/} (\texttt{results.csv},
+\texttt{trajectories.csv} --- classification is stable well before stopping ---
+\texttt{block2\_neurons.csv}, \texttt{stage1.json}, figures, this report); code:
+\texttt{analysis/accessibility/run\_experiment.py}.
+\end{document}
