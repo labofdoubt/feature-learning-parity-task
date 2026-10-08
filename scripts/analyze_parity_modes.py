@@ -29,8 +29,8 @@ import pandas as pd
 import torch
 
 from parity_net.checkpoint import load_checkpoint
-from parity_net.data import TargetSpec, load_dataset, target_names, tree_parity_specs
-from parity_net.train import max_target_degree_for_model, resolve_device, resolve_dtype
+from parity_net.data import TargetSpec, load_dataset, tree_parity_specs
+from parity_net.train import resolve_device, resolve_dtype
 
 
 @torch.no_grad()
@@ -103,19 +103,25 @@ def run(
     model = model.to(device=device, dtype=dtype)
 
     relevant_dim = int(task["relevant_dim"])
-    all_specs = tree_parity_specs(
-        relevant_dim,
-        task.get("exclude_targets", []),
-        max_target_degree_for_model(model.config),
-    )
+    # Enumerate the FULL binary tree of parity modes, ignoring the run's
+    # exclude_targets / train_only_root supervision choices: this analysis
+    # measures which modes exist in the residual stream, which is independent
+    # of which targets were supervised (e.g. an excluded d8_1 is still measured).
+    all_specs = tree_parity_specs(relevant_dim)
     if degrees:
         all_specs = [s for s in all_specs if s.degree in degrees]
     spec_labels = [s.name for s in all_specs]
 
-    test_data = load_dataset(run_dir / "test_data.pt", device, dtype)
+    _data_path = run_dir / "eval_uniform.pt"
+    if not _data_path.exists():
+        _data_path = run_dir / "test_data.pt"
+        print(f"eval_uniform.pt not found, falling back to test_data.pt")
+    print(f"Loading data from: {_data_path.name}")
+    test_data = load_dataset(_data_path, device, dtype)
     x = test_data.x
     if num_samples is not None and num_samples < x.shape[0]:
-        x = x[:num_samples]
+        perm = torch.randperm(x.shape[0], generator=torch.Generator().manual_seed(42))
+        x = x[perm[:num_samples]]
 
     analysis_dir = run_dir / "analysis"
     plots_dir = run_dir / "plots"

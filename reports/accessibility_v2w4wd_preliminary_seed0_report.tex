@@ -1,0 +1,79 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1.35cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{3pt}
+\graphicspath{{../analysis_output/accessibility_alpha_v2w4wd/}}
+
+\begin{document}
+\begin{center}
+{\Large\bfseries Preliminary matched-$V_2$/readout-decay experiment}\par\vspace{-1pt}
+{\small Seed 0; 8 ReLU scales $\times$ 8 decay values = 64 completed cells}
+\end{center}
+\vspace{-4pt}
+
+\textbf{Question and design.}
+This experiment repeats the unfrozen accessibility sweep while applying the same phase-2
+weight decay $\lambda$ to $V_2$ and to the $d4$ readout row $W[2]$.  The purpose is to remove
+the V2-only experiment's scale escape, in which $V_2$ shrank while the unpenalized readout
+grew.  The preliminary grid covers
+$\alpha\in\{0.1,0.3,0.5,0.75,1,1.5,2.5,4\}$ and
+$\lambda\in\{0,10^{-4},3\!\cdot\!10^{-4},10^{-3},3\!\cdot\!10^{-3},10^{-2},
+3\!\cdot\!10^{-2},10^{-1}\}$.
+
+\textbf{Is $R_0$ controlled by the ReLU coefficient?  Yes.}
+At $d4$ onset the pretrained first-block matrix is replaced by $V_1\mapsto\alpha V_1$.
+For $\alpha>0$, ReLU homogeneity gives
+$\operatorname{ReLU}(h_0(\alpha V_1)^\top)=
+\alpha\operatorname{ReLU}(h_0V_1^\top)$, so $\alpha$ directly controls the first-block
+features and therefore the measured accessibility $R_0=Q_2/Q_1$.  The relation is monotone
+but not linear because the residual term $h_0$ is not rescaled.  In seed 0, each $\alpha$
+gave exactly one $R_0$ across all eight $\lambda$ values:
+
+\vspace{-2pt}
+\begin{center}\small
+\begin{tabular}{@{}c rrrrrrrr@{}}
+\toprule
+$\alpha$ & 0.10 & 0.30 & 0.50 & 0.75 & 1.00 & 1.50 & 2.50 & 4.00 \\
+$R_0$    & .038 & .113 & .181 & .256 & .319 & .411 & .510 & .568 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\vspace{-2pt}
+Thus the theoretical boundary $R_c=1/\sqrt{8}=0.354$ is crossed between
+$\alpha=1$ and $\alpha=1.5$.  Across seeds, $\alpha$ remains the controlled intervention and
+$R_0$ the measured response; small seed-to-seed shifts are expected.
+
+\textbf{Preliminary result.}
+Matched readout decay does \emph{not} sharpen a compositional transition near $R_c$ in seed 0.
+The largest compositional shares occur only under very weak decay: for the supercritical
+$\alpha=2.5$ cell, $f_{2+2}$ rises from 0.085 at $\lambda=0$ to 0.114 at
+$3\!\cdot\!10^{-4}$, then collapses to 0.017 at $10^{-3}$ and approximately zero by
+$3\!\cdot\!10^{-3}$.  Averaged across $\alpha$, $f_{2+2}$ falls from 0.043 at $\lambda=0$
+to 0.008 at $10^{-3}$, 0.002 at $10^{-2}$, and 0.0005 at $10^{-1}$.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.99\textwidth]{fig1_seed0_preliminary.pdf}
+\vspace{-7pt}
+\caption{Direct seed-0 analogue of Fig.~1 in the V2-only report.  Color is the weighted
+$2{+}2\!\to\!4$ fraction; the dashed line is $R_c$.  Despite upward/rightward drift in
+$R_{\rm final}$ under decay, cells remain blue: becoming accessible does not produce a
+compositional phase when the $d4$ readout is decayed together with $V_2$.}
+\end{figure}
+\vspace{-7pt}
+
+\textbf{Interpretation.}
+The scale escape is removed---both $V_2$ and its $d4$ readout are penalized---but the network
+responds by suppressing the measured block-2 compositional route rather than balancing it.
+At the same time, $R(t)$ generally drifts upward (for example, at $\alpha=0.1$,
+$R_{\rm final}=0.139$ at $\lambda=0$ and 0.368 at $10^{-2}$).  The coexistence of high
+$R_{\rm final}$, near-zero $f_{2+2}$, and solved $d4$ is consistent with the first-block $d4$
+leak/residual shortcut taking over.  This is a strong preliminary pattern, but uncertainty and
+cross-seed consistency must wait for the full 192-cell merge.
+
+\end{document}

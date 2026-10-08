@@ -81,7 +81,8 @@ def load_model(path: Path, device: torch.device) -> tuple[TwoBlockPhaseNet, dict
     payload = load_torch(path, device)
     state = {name: value.to(device=device, dtype=torch.float64)
              for name, value in payload["state_dict"].items()}
-    model = TwoBlockPhaseNet(state["E"].shape[0], 0, device, torch.float64)
+    width, input_dim = state["E"].shape   # 4 inputs for d2/d4, 8 for d4/d8
+    model = TwoBlockPhaseNet(width, 0, device, torch.float64, input_dim=input_dim)
     model.load_state_dict(state)
     return model, dict(payload.get("metadata", {}))
 

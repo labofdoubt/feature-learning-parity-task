@@ -49,9 +49,17 @@ def run(run_dir: Path, pca_samples: int, keep_pcs_max: int, keep_pcs_step: int, 
         max_target_degree_for_model(model.config),
     )
 
-    test_data = load_dataset(run_dir / "test_data.pt", device, dtype)
+    _data_path = run_dir / "eval_uniform.pt"
+    if not _data_path.exists():
+        _data_path = run_dir / "test_data.pt"
+        print(f"eval_uniform.pt not found, falling back to test_data.pt")
+    print(f"Loading data from: {_data_path.name}")
+    test_data = load_dataset(_data_path, device, dtype)
     if pca_samples < test_data.x.shape[0]:
-        test_data = type(test_data)(x=test_data.x[:pca_samples], y=test_data.y[:pca_samples])
+        import torch as _torch
+        perm = _torch.randperm(test_data.x.shape[0], generator=_torch.Generator().manual_seed(42))
+        idx = perm[:pca_samples]
+        test_data = type(test_data)(x=test_data.x[idx], y=test_data.y[idx])
 
     layer_acts = collect_layer_activations(model, test_data.x, batch_size)
     pcas = [pca_from_activations(acts) for acts in layer_acts]

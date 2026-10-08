@@ -1,0 +1,151 @@
+\documentclass[10pt]{article}
+\usepackage[margin=0.56in]{geometry}
+\usepackage{amsmath,amssymb,booktabs,graphicx,microtype,xcolor}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{3pt}
+\setlength{\abovedisplayskip}{4pt}
+\setlength{\belowdisplayskip}{4pt}
+\setlength{\textfloatsep}{5pt}
+\renewcommand{\arraystretch}{1.08}
+
+\newcommand{\WarmPhaseAgreement}{87.5\%}
+\newcommand{\JointPhaseAgreement}{37.5\%}
+\newcommand{\WarmGateAgreement}{91.2\%}
+\newcommand{\JointGateAgreement}{49.1\%}
+\newcommand{\WarmShareMAE}{0.152}
+\newcommand{\JointShareMAE}{0.337}
+\newcommand{\ProtocolDisagreement}{59.3\%}
+\newcommand{\CompositionalRuns}{143}
+\newcommand{\TotalRuns}{432}
+\newcommand{\CappedRuns}{333}
+
+\title{\vspace{-1.15cm}\textbf{Two-Block Circuit Formation:\\Stationary Theory versus Training}}
+\author{}
+\date{\vspace{-1.25cm}}
+
+\begin{document}
+\maketitle
+\vspace{-0.7cm}
+
+\textbf{Result in one sentence.}
+The fully trainable network can form a $2+2\!\to\!4$ circuit, but only in a finite
+layerwise-decay window: weak first-block decay leaves a cheap block-1 shortcut, whereas strong
+first-block decay destroys the degree-2 parents; initialization determines whether training
+finds the compositional minimum inside that window.
+
+\textbf{Theory tested.}
+For singleton norm $s=Q_1^{(0)}$, parent norm $q=Q_2$, and
+$Q_1^{(1)}=\sqrt{s^2+q^2}$, the reduced zero-temperature theory compares the optimized
+direct hybrid $H_D=D_1+D_2$ with the compositional hybrid $H_C=D_1+C$.  At fixed
+representation, block 2 selects $C$ precisely when
+\[
+R\equiv Q_2/Q_1^{(1)}>1/\sqrt8.
+\]
+The representation is itself optimized, so the actual boundary follows from $F_C=F_D$.
+Inside $H_C$, the predicted compositional output share is
+\[
+f_C=\frac{8\lambda_1q^2}{\lambda_2s^2+8\lambda_1q^2}.
+\]
+Increasing $\lambda_1/\lambda_2$ therefore suppresses the block-1 shortcut but also raises the
+cost of the block-1 parents, producing a bounded rather than monotone compositional region.
+
+\textbf{Experiment.}
+We trained a bias-free two-residual-block ReLU network of width $N=1024$ on the exact
+four-bit cube.  Both degree-2 parents and the degree-4 target were trained simultaneously,
+with no frozen weights and
+$\gamma_2=\gamma_4=2$.  The tested plane was
+\[
+\lambda_E=\lambda_2=\lambda_p=\lambda_4=\lambda_0,
+\qquad \lambda_1=(\lambda_1/\lambda_2)\lambda_0,
+\]
+using nine $\lambda_0$ values, eight ratios, three seeds, and two protocols.  \emph{Joint}
+trains both parent targets and the degree-4 target from the common random initialization,
+with every weight trainable.  \emph{Parent-warm} first trains $E,V_1,W_{d2}$ on the parents
+read from $h_1$, then unfreezes everything and trains the identical final objective
+(216 runs per protocol; \TotalRuns{} total).  Full-batch float64 SGD used
+$\eta_{E,V}=10^{-2}$ and the muP readout scaling $\eta_W=10^{-2}/N$.  Each cell ran for at
+least 15k and at most 50k steps.  Every empirical row below uses the protocol specified
+before training; no post-hoc selection between protocols is used.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.66\textwidth]{../analysis_output/two_block_phase_diagram/theory_empirical_comparison.pdf}
+\vspace{-7pt}
+\caption{\textbf{Theory (top), parent-warm (middle), and joint training (bottom).}
+Columns show phase, total compositional target share, and final accessibility.  Cyan marks
+$R=1/\sqrt8$.  Each empirical row averages its own three seeds; neither row is selected or
+replaced using the other protocol's final objective.}
+\end{figure}
+
+\clearpage
+\textbf{Quantitative comparison.}
+
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Diagnostic & Parent-warm & Joint \\
+\midrule
+Theory/protocol phase agreement over the $8\times9$ grid
+  & \WarmPhaseAgreement & \JointPhaseAgreement \\
+Measured-$R$ gate agreement in active cells
+  & \WarmGateAgreement & \JointGateAgreement \\
+Mean absolute error in total compositional share $f_C$
+  & \WarmShareMAE & \JointShareMAE \\
+Grid cells with majority phase $H_C$ & $44/72$ & $3/72$ \\
+Individual runs classified $H_C$ & $134/216$ & $9/216$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The two protocols select different phases in \ProtocolDisagreement{} of matched
+seed/cell comparisons (128/216).
+
+\textbf{What the phase diagram establishes.}
+First, the desired circuit is feasible without freezing: the prespecified parent-warm
+protocol occupies a substantial band at moderate $\lambda_0$ and moderate
+$\lambda_1/\lambda_2$, and reproduces the theoretical phase topology much better than joint
+training.  Second, the two
+failure modes predicted by the reduced theory are distinct.  At small ratio, parents remain
+large but the degree-4 readout uses the inexpensive $D_1$ shortcut.  At large ratio, $D_1$
+is suppressed but $Q_2$ collapses, $R$ falls below $1/\sqrt8$, and block 2 uses $D_2$ or the
+target is suppressed.  Third, matched joint and parent-warm runs---same seed, same decay cell,
+and identical final objective---selected different phases in 128 of 216 cases.  This
+hysteresis is finite-time/nonconvex basin selection, not a shift of the local gate boundary.
+The largest parent-warm mean compositional share was $0.681$ at $\lambda_0=10^{-3}$ and
+$\lambda_1/\lambda_2=1$, with $R=0.595$ and target amplitude $0.995$; the theory selects
+$H_C$ in the same cell and predicts $f_C=0.749$.
+
+\textbf{How to favor $2+2\!\to\!4$.}
+Use nonzero decay on the degree-4 readout so hidden/readout rescaling cannot evade the norm
+comparison.  Keep $\lambda_E$, $\lambda_p$, and especially the parent-producing part of
+$\lambda_1$ small enough that the \emph{final} measured $R$ stays above $1/\sqrt8$; then make
+block 2 cheaper than the block-1 degree-4 shortcut by lowering $\lambda_2$ relative to the
+target-specific block-1 decay.  Whole-layer $\lambda_1$ is an imperfect control because it
+taxes wanted parents and the unwanted shortcut together.  If the feasible window is narrow,
+separate those directions with a decayed block-1 degree-4 adapter or soft subspace penalty.
+
+\textbf{Interpretation and limits.}
+The stationary theory captures the topology of the control problem---a compositional window
+between shortcut domination and parent collapse---but quantitative differences are expected.
+The finite network contains mixed Walsh features, non-orthogonal singleton leakage, and
+multifunctional neurons omitted by the balanced rank-one ansatz.  Moreover, many runs hit
+the 50k-step cap (\CappedRuns{} of \TotalRuns{}), while protocol disagreement directly
+demonstrates metastability.  Thus the parent-warm map is a history-conditioned accessibility
+map, not proof of equilibrium, while the joint map directly displays the optimization
+barrier from random initialization.  The most robust local diagnostic remains the measured inequality
+$Q_2/Q_1^{(1)}>1/\sqrt8$, together with the signed target contributions from $h_1$ and the
+second residual branch.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.52\textwidth]{../analysis_output/two_block_phase_diagram/full_objective_protocol_difference.pdf}
+\vspace{-7pt}
+\caption{\textbf{Full regularized objective difference between the two prespecified
+protocols.}  Each cell shows the mean matched-seed difference
+$J_{\rm warm}-J_{\rm joint}$ using a signed-log color scale: blue favors parent-warm, red
+favors joint, and the black contour marks equality.  This is an objective diagnostic only;
+it is not used to select or replace either empirical phase-map row in Fig.~1.}
+\end{figure}
+
+\end{document}

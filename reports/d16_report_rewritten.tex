@@ -1,0 +1,125 @@
+\documentclass[10pt]{article}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{4pt}\setlength{\parindent}{0pt}
+
+\title{\vspace{-1.2cm}Neuron mechanisms III: where the degree-16 parity lives\\
+\large \texttt{wd3\_k0\_N2048}, step 500k --- post-nonlinearity units, uniform evaluation data}
+\author{}\date{September 2026}
+
+\begin{document}\maketitle\vspace{-1.4cm}
+
+\section*{Setup}
+We use the same protocol as in the $d4$/$d8$ reports: for each neuron,
+$a=\phi(z)$ with $\phi=\mathrm{relu}(\tanh)$ and $z=(Vh)_n$, evaluated on all
+$2^{16}$ uniform inputs. A neuron is called \emph{$d16$-dominant} when
+$\chi_{d16}$ is the largest among its 15 tracked tree-mode Walsh coefficients.
+To understand what drives each neuron, we decompose $\mathrm{Var}(z)$ into
+contributions from the 16 raw singleton inputs, the tree degree-2/4 modes, the two
+half-parities $y_0=\chi_{d8_0},\,y_1=\chi_{d8_1}$, and $\chi_{d16}$ itself.
+
+\section*{Headline: the target parity has no dedicated neurons}
+Only \textbf{25 of 8192} neurons are $d16$-dominant (6/10/3/6 per block), but
+these neurons do not carry an appreciable fraction of the actual $d16$
+computation.
+
+\textbf{(i) 19 wide raw-bit gates (blocks 0--2).} Their pre-activation $z$ is built
+almost entirely from \emph{all sixteen} singleton inputs ($\geq99\%$ of
+$\mathrm{Var}\,z$). They are the width-16 version of the same balanced-input
+majority-gate mechanism seen at lower degrees. At width 16, however, the neuron's
+Walsh spectrum is distributed over so many modes that each individual tree
+coefficient is extremely small. Their tree coverage is only $0.007$, continuing
+the sequence
+$d2\!:\!1/3 \to d4\!:\!0.15 \to d8\!:\!0.044 \to d16\!:\!0.007$, and their
+$d16$ power is only $a^2(d16)\sim10^{-5}$--$10^{-4}$. Thus their apparent
+``$d16$-dominance'' mostly comes from taking an argmax over fifteen coefficients
+that are all close to zero.
+
+\textbf{(ii) 6 near-dead receivers (block 3).} These neurons do have a genuine
+$d16$-shaped component: about $40\%$ of their activation variance is in
+$\chi_{d16}$, and their tree coverage is $\approx0.95$. But their total activation
+variance is only $\mathrm{Var}(a)\sim10^{-6}$, so their contribution to the
+network-level computation is negligible.
+
+\section*{Who actually carries $\chi_{d16}$}
+The layer-level accounting over \emph{all} neurons (Fig.~\ref{fig:d16}, middle)
+makes the answer clear. The total degree-16 power $H(d16)$ is
+$1.6{\times}10^{-3}$ and $1.4{\times}10^{-3}$ in blocks 0--1, which is essentially
+the noise floor. It then rises to $2.8{\times}10^{-2}$ in block 2 and
+$1.3{\times}10^{-1}$ in block 3.
+
+At exactly these blocks, almost all of the $d16$ signal is carried by the
+\textbf{$8{+}8$ corner units identified in the $d8$ study}: they account for
+$98.7\%$ of $H(d16)$ in block 2 and $99.8\%$ in block 3. There are 189 such
+neurons. Their input has the form
+$\gamma(\pm y_0\pm y_1)$, where $y_0$ and $y_1$ are the two degree-8 half-parities,
+so after the nonlinearity they act as two-input corner detectors. As in the
+degree-2 case, each such corner detector has equal nonconstant Walsh power in its
+two inputs and in their product. Here that means equal thirds over
+$\{\chi_{d8_0},\chi_{d8_1},\chi_{d16}\}$.
+
+By contrast, the 25 neurons labeled ``$d16$-dominant'' contribute only $0.2\%$ of
+$H(d16)$ in block 2 and $0.04\%$ in block 3.
+
+Unlike $d8$ --- which is first created in blocks 0--1 and then passed to dedicated
+\emph{amplifier} neurons --- no analogous $d16$ amplifier population appears.
+The reason is architectural: $d16$ is created only in blocks 2--3, immediately
+before the final linear readout uses the residual stream. There is therefore no
+later residual block that needs to extract and amplify a cleaner copy of the
+feature.
+
+As a result, the degree-16 parity remains a \emph{collective} representation all
+the way to the readout. It appears as one component of many $8{+}8$ corner
+neurons, rather than becoming the main computation of a dedicated neuron.
+
+\begin{figure}[h]\centering
+\includegraphics[width=\textwidth]{fig5_d16_mechanisms.pdf}
+\caption{Left: the 25 $d16$-dominant neurons in input space --- 19 wide raw-bit gates
+at the origin, 6 near-dead receivers; the actual creators (red, $d8$-labeled corner
+units) sit at $x\!\approx\!1$. Middle: share of layer $H(d16)$ by class --- at the
+blocks where $H(d16)$ is macroscopic ($2.8{\times}10^{-2}$, $1.3{\times}10^{-1}$), the
+corner units own it ($98.7\%$, $99.8\%$). Right: per-neuron $a^2(d16)$ by class ---
+the strongest corners reach $10^{-2}$, two orders above anything
+``$d16$-dominant''.}
+\label{fig:d16}
+\end{figure}
+
+\begin{table}[h]\centering\small
+\begin{tabular}{lccccc}
+\toprule
+class & input ($z$) & blocks & $n$ & tree cov. & share of $H(d16)$ @ b2/b3 \\
+\midrule
+$8{+}8$ corner ($d8$-labeled) & $\gamma(\pm y_0\pm y_1)$ & 2--3 & 189 & $1.00$ & $98.7\%$ / $99.8\%$ \\
+16-input raw-bit gate & $\gamma\sum_{16}s_kx_k$ & 0--2 & 19 & $0.007$ & $0.2\%$ / --- \\
+near-dead receiver & mixed $d16{+}d8$, tiny & 3 & 6 & $0.95$ & --- / $0.04\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Takeaway.} The mechanism across the full parity hierarchy is now
+consistent. Degree-2, 4, and 8 modes are generated by the same basic template:
+balanced linear combinations passed through $\mathrm{relu}(\tanh)$. When the
+inputs to such a gate are raw bits, its Walsh power is spread over many modes, so
+the fraction visible in the target-tree modes decreases rapidly with width
+($1/3,\,0.15,\,0.044,\,0.007$).
+
+The only genuinely compositional step occurs at the top of the hierarchy. The two
+degree-8 half-parities are already available, and $8{+}8$ corner detectors combine
+them to produce $\chi_{d16}$. In each such neuron, the degree-16 product is one of
+three equal nonconstant Walsh components rather than a dedicated feature. Because
+the readout follows immediately afterward, the network never needs to distill
+$\chi_{d16}$ into a separate amplifier population.
+
+Therefore, in the meaningful mechanistic sense, ``the neurons computing the
+$d16$ parity'' are the $8{+}8$ corner-detector population as a whole. The neurons
+selected purely by a $d16$-dominance label mostly reflect an argmax over tiny
+coefficients rather than the true location of the computation.
+
+\vfill\footnotesize
+Artifacts: \texttt{gdrive:parity/analysis\_output/neuron\_mechanisms/wd3\_k0\_N2048/step\_00500000/}
+(\texttt{d16\_classes.csv}, figures, this report; companion $d2$/$d4$/$d8$ probes in
+the same folder).
+\end{document}

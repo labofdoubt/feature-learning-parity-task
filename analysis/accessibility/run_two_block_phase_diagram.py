@@ -21,10 +21,23 @@ The script records continuous observables rather than relying only on a hard
 phase label: Q1, Q2, R=Q2/Q1, target amplitudes, signed d4 contributions from
 h1 and the block-2 residual, block-2 preactivation purity, circuit shares,
 individual regularization costs, and the final gradient norm.
+
+Optional Langevin annealing (``--temperature-initial T0 > 0``) acts only on the
+final joint-objective phase, never on parent pretraining.  After every SGD
+update each trainable parameter receives ``sqrt(2 * lr_group * T(t)) * xi`` with
+``xi ~ N(0, I)``, where ``lr_group`` is its optimizer group's learning rate, so
+the stationary density is exp(-objective / T) for both the hidden and the muP
+readout groups.  T(t) = T0 for the first ``--temperature-hold-steps`` updates,
+then decays exponentially to ``final_ratio * T0`` over
+``--temperature-anneal-steps``, and is 0 afterwards.  Noisy runs need momentum
+0, skip plateau stopping (always ``max_steps`` updates) and draw their noise
+from a per-cell generator seeded by ``noise_stream_seed``.  With T0 = 0 the
+code path, outputs and cell ids are exactly those of the deterministic sweep.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import math
@@ -67,6 +80,54 @@ class CubeData:
     y2: torch.Tensor
     y4: torch.Tensor
     chi: dict[tuple[int, ...], torch.Tensor]
+
+
+@dataclass(frozen=True)
+class TemperatureSchedule:
+    """Langevin temperature T(t) of the final-phase update number t (1-based).
+
+    T = initial for t <= hold_steps; T = initial * final_ratio ** (k / anneal_steps)
+    for k = t - hold_steps in 1..anneal_steps (reaching final_ratio * initial at the
+    end of the anneal); T = 0 afterwards.  initial = 0 means deterministic training.
+    """
+    initial: float = 0.0
+    hold_steps: int = 5000
+    anneal_steps: int = 25000
+    final_ratio: float = 1e-3
+
+    def __post_init__(self) -> None:
+        if self.initial < 0:
+            raise ValueError("temperature-initial must be non-negative")
+        if self.hold_steps < 0 or self.anneal_steps < 0:
+            raise ValueError("temperature hold/anneal steps must be non-negative")
+        if not 0 < self.final_ratio <= 1:
+            raise ValueError("temperature-final-ratio must lie in (0, 1]")
+
+    @property
+    def active(self) -> bool:
+        return self.initial > 0
+
+    @property
+    def last_noisy_step(self) -> int:
+        return self.hold_steps + self.anneal_steps
+
+    def __call__(self, step: int) -> float:
+        if not self.active:
+            return 0.0
+        if step <= self.hold_steps:
+            return self.initial
+        elapsed = step - self.hold_steps
+        if elapsed <= self.anneal_steps:
+            return self.initial * self.final_ratio ** (elapsed / self.anneal_steps)
+        return 0.0
+
+    def as_record(self) -> dict[str, float | int]:
+        return {
+            "temperature_initial": self.initial,
+            "temperature_hold_steps": self.hold_steps,
+            "temperature_anneal_steps": self.anneal_steps,
+            "temperature_final_ratio": self.final_ratio,
+        }
 
 
 def parse_csv(text: str, cast=float) -> list:
@@ -113,16 +174,34 @@ class TwoBlockPhaseNet(nn.Module):
         seed: int,
         device: torch.device,
         dtype: torch.dtype,
+        readout_init: str = "mup",
+        input_dim: int = 4,
+        base_width: int | None = None,
     ) -> None:
         super().__init__()
         if width < 2:
             raise ValueError("width must be at least 2")
+        if readout_init not in ("mup", "fan_in", "base"):
+            raise ValueError("readout_init must be 'mup', 'fan_in' or 'base'")
+        if (readout_init == "base") != (base_width is not None):
+            raise ValueError("base_width is required by, and only used with, readout_init='base'")
+        if base_width is not None and not 1 <= base_width <= width:
+            raise ValueError("base_width must lie in [1, width]")
         self.width = width
         generator = torch.Generator(device=device).manual_seed(seed)
+        readout_scale = {"mup": width, "fan_in": math.sqrt(width)}.get(readout_init)
+        if readout_scale is None:
+            readout_scale = width / math.sqrt(base_width)
 
-        # Repository muP convention: Var(E)=1/d, Var(V)=1/N, Var(W)=1/N^2.
+        # Repository muP convention: Var(E)=1/d, Var(V)=1/N, Var(W)=1/N^2
+        # (readout_init="fan_in" gives the readouts Var(W)=1/N like the hidden layers;
+        # "base" gives Var(W)=N0/N^2, the fan-in readout 1/N0 of a width-N0 network carried
+        # to width N, which interpolates between muP at N0=1 and fan-in at N0=N).
+        # The random draws do not depend on readout_init, which only rescales the readouts.
+        # input_dim=8 serves the d4/d8 task (run_two_block_d4_d8_phase_diagram.py).
         self.E = nn.Parameter(
-            torch.randn(width, 4, generator=generator, device=device, dtype=dtype) / 2.0
+            torch.randn(width, input_dim, generator=generator, device=device, dtype=dtype)
+            / math.sqrt(input_dim)
         )
         self.V1 = nn.Parameter(
             torch.randn(width, width, generator=generator, device=device, dtype=dtype)
@@ -133,10 +212,10 @@ class TwoBlockPhaseNet(nn.Module):
             / math.sqrt(width)
         )
         self.Wp = nn.Parameter(
-            torch.randn(2, width, generator=generator, device=device, dtype=dtype) / width
+            torch.randn(2, width, generator=generator, device=device, dtype=dtype) / readout_scale
         )
         self.w4 = nn.Parameter(
-            torch.randn(width, generator=generator, device=device, dtype=dtype) / width
+            torch.randn(width, generator=generator, device=device, dtype=dtype) / readout_scale
         )
 
     def parts(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
@@ -355,15 +434,47 @@ def build_sgd(
     hidden_lr: float,
     readout_lr: float,
     momentum: float,
+    embedding: tuple[Iterable[nn.Parameter], float] | None = None,
 ) -> torch.optim.SGD:
-    """Build muP-compatible SGD groups without optimizer-level weight decay."""
+    """Build muP-compatible SGD groups without optimizer-level weight decay.
+
+    ``embedding=(parameters, lr)`` gives the embedding its own rate (an extra group in front);
+    otherwise the caller lists E among the hidden parameters.
+    """
+    groups = [] if embedding is None else [{"params": list(embedding[0]), "lr": embedding[1]}]
     return torch.optim.SGD(
-        [
+        groups + [
             {"params": list(hidden_parameters), "lr": hidden_lr},
             {"params": list(readout_parameters), "lr": readout_lr},
         ],
         momentum=momentum,
     )
+
+
+def noise_stream_seed(noise_seed: int, model_seed: int, protocol: str,
+                      lambda0: float, ratio: float) -> int:
+    """Stable 63-bit seed for one cell's Langevin noise.
+
+    Derived with SHA-256 rather than Python's per-process randomized hash(), so the
+    same cell gets the same noise in every process and on every machine.
+    """
+    key = f"{noise_seed}|{model_seed}|{protocol}|{lambda0:.8g}|{ratio:.8g}".encode()
+    return int.from_bytes(hashlib.sha256(key).digest()[:8], "big") & ((1 << 63) - 1)
+
+
+@torch.no_grad()
+def add_langevin_noise(optimizer: torch.optim.Optimizer, temperature: float,
+                       generator: torch.Generator) -> None:
+    """theta += sqrt(2 * lr_group * T) * xi, xi ~ N(0, I), for every trainable parameter."""
+    if temperature <= 0:
+        return
+    for group in optimizer.param_groups:
+        scale = math.sqrt(2.0 * group["lr"] * temperature)
+        for parameter in group["params"]:
+            if parameter.requires_grad:
+                noise = torch.randn(parameter.shape, generator=generator,
+                                    device=parameter.device, dtype=parameter.dtype)
+                parameter.add_(noise, alpha=scale)
 
 
 def state_is_finite(state: dict[str, torch.Tensor]) -> bool:
@@ -431,7 +542,17 @@ def train_cell(
     plateau_window: int,
     plateau_tol: float,
     snapshot_every: int,
+    temperature: TemperatureSchedule | None = None,
+    noise_generator: torch.Generator | None = None,
 ) -> tuple[dict[str, float | str], list[dict[str, float | str]]]:
+    """Train the final objective; with an active temperature, run Langevin SGD.
+
+    Noisy runs require momentum 0 and always take exactly ``max_steps`` updates
+    (no plateau stopping); every trajectory row then records the current T.
+    """
+    noisy = temperature is not None and temperature.active
+    if noisy and (momentum != 0 or noise_generator is None):
+        raise ValueError("Langevin training needs momentum 0 and a noise generator")
     optimizer = build_sgd(
         [model.E, model.V1, model.V2],
         [model.Wp, model.w4],
@@ -443,6 +564,8 @@ def train_cell(
     trajectory: list[dict[str, float | str]] = []
     initial = measure(model, data, decays, gamma2, gamma4)
     trajectory.append({"step": 0, **initial})
+    if noisy:
+        trajectory[0]["temperature"] = temperature(0)
     start = time.perf_counter()
     converged = False
 
@@ -451,6 +574,8 @@ def train_cell(
         terms = loss_terms(model, data, decays, gamma2, gamma4)
         terms["objective"].backward()
         optimizer.step()
+        if noisy:
+            add_langevin_noise(optimizer, temperature(step), noise_generator)
         objective = float(terms["objective"].detach())
         if not math.isfinite(objective):
             raise FloatingPointError(f"non-finite objective at step {step}")
@@ -458,11 +583,16 @@ def train_cell(
 
         if step % snapshot_every == 0:
             trajectory.append({"step": step, **measure(model, data, decays, gamma2, gamma4)})
-        if step >= min_steps and plateau_reached(history, plateau_window, plateau_tol):
+            if noisy:
+                trajectory[-1]["temperature"] = temperature(step)
+        if (not noisy and step >= min_steps
+                and plateau_reached(history, plateau_window, plateau_tol)):
             converged = True
             break
 
     final = measure(model, data, decays, gamma2, gamma4)
+    if noisy:
+        final["temperature"] = temperature(step)
     if trajectory[-1]["step"] != step:
         trajectory.append({"step": step, **final})
 
@@ -522,7 +652,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="SGD learning rate for Wp and w4 (default: lr/width, the muP scaling)",
     )
-    parser.add_argument("--momentum", type=float, default=0.9)
+    parser.add_argument("--readout-init", choices=("mup", "fan_in"), default="mup",
+                        help="readout init variance: mup = 1/N^2 (default), fan_in = 1/N")
+    parser.add_argument("--momentum", type=float, default=0.9,
+                        help="SGD momentum of the final phase (must be 0 when T0 > 0)")
+    parser.add_argument("--pretrain-momentum", type=float, default=None,
+                        help="momentum of noise-free parent pretraining (default: --momentum)")
+    parser.add_argument("--temperature-initial", type=float, default=0.0,
+                        help="Langevin temperature T0 of the final phase; 0 = deterministic")
+    parser.add_argument("--temperature-hold-steps", type=int, default=5000,
+                        help="updates held at T0 before annealing")
+    parser.add_argument("--temperature-anneal-steps", type=int, default=25000,
+                        help="updates of exponential decay from T0 to final_ratio*T0")
+    parser.add_argument("--temperature-final-ratio", type=float, default=1e-3,
+                        help="T at the end of the anneal relative to T0 (T=0 afterwards)")
+    parser.add_argument("--noise-seed", type=int, default=0,
+                        help="base seed of the per-cell Langevin noise streams")
     parser.add_argument("--max-steps", type=int, default=50_000)
     parser.add_argument("--min-steps", type=int, default=15_000)
     parser.add_argument("--plateau-window", type=int, default=5_000)
@@ -566,6 +711,18 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("learning rates must be positive")
 
     readout_lr = args.lr / args.width if args.readout_lr is None else args.readout_lr
+    temperature = TemperatureSchedule(
+        args.temperature_initial,
+        args.temperature_hold_steps,
+        args.temperature_anneal_steps,
+        args.temperature_final_ratio,
+    )
+    noisy = temperature.active
+    pretrain_momentum = args.momentum if args.pretrain_momentum is None else args.pretrain_momentum
+    if noisy and args.momentum != 0:
+        raise ValueError("Langevin runs (--temperature-initial > 0) require --momentum 0")
+    if noisy and args.max_steps < temperature.last_noisy_step:
+        raise ValueError("max-steps must cover the temperature hold and anneal phases")
 
     device = resolve_device(args.device)
     dtype = torch.float64 if args.dtype == "float64" else torch.float32
@@ -580,7 +737,12 @@ def main(argv: list[str] | None = None) -> None:
     print(
         f"device={device} dtype={args.dtype} width={args.width} cells={cell_count} "
         f"hidden_lr={args.lr:g} readout_lr={readout_lr:g} "
-        f"ratios={ratios} lambda0s={lambda0s} protocols={protocols}",
+        f"ratios={ratios} lambda0s={lambda0s} protocols={protocols}"
+        + (f" T0={temperature.initial:g} hold={temperature.hold_steps} "
+           f"anneal={temperature.anneal_steps} final_ratio={temperature.final_ratio:g} "
+           f"noise_seed={args.noise_seed} pretrain_momentum={pretrain_momentum:g}"
+           if noisy else "")
+        + (f" readout_init={args.readout_init}" if args.readout_init != "mup" else ""),
         flush=True,
     )
     if args.dry_run:
@@ -610,11 +772,20 @@ def main(argv: list[str] | None = None) -> None:
         "derived_readout_lr": readout_lr,
         "critical_accessibility": RC,
     }
+    if noisy:
+        manifest["temperature"] = {**temperature.as_record(), "noise_seed": args.noise_seed}
+        manifest["momentum"] = args.momentum
+        manifest["pretrain_momentum"] = pretrain_momentum
+    if args.readout_init != "mup":
+        manifest["readout_init"] = args.readout_init
     if manifest_path.exists():
         old = json.loads(manifest_path.read_text())
-        keys = ("ratios", "lambda0s", "seeds", "protocols", "derived_readout_lr")
-        if any(old.get(key) != manifest[key] for key in keys):
-            raise RuntimeError(f"{manifest_path} exists with a different grid")
+        keys = ("ratios", "lambda0s", "seeds", "protocols", "derived_readout_lr", "temperature",
+                "readout_init")
+        if any(old.get(key) != manifest.get(key) for key in keys):
+            raise RuntimeError(
+                f"{manifest_path} exists with a different grid or temperature schedule"
+            )
     else:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
 
@@ -636,7 +807,7 @@ def main(argv: list[str] | None = None) -> None:
 
     completed_this_run = 0
     for seed in seeds:
-        base = TwoBlockPhaseNet(args.width, seed, device, dtype)
+        base = TwoBlockPhaseNet(args.width, seed, device, dtype, readout_init=args.readout_init)
         joint_state = clone_state(base)
         protocol_states = {"joint": joint_state}
 
@@ -655,6 +826,17 @@ def main(argv: list[str] | None = None) -> None:
                     raise RuntimeError(
                         f"{warm_path} was created with different optimizer learning rates"
                     )
+                # Warm starts saved before momentum was recorded used the 0.9 default.
+                if payload.get("momentum", pretrain_momentum) != pretrain_momentum:
+                    raise RuntimeError(
+                        f"{warm_path} was pretrained with momentum {payload['momentum']}, "
+                        f"not {pretrain_momentum}"
+                    )
+                if payload.get("readout_init", "mup") != args.readout_init:
+                    raise RuntimeError(
+                        f"{warm_path} has readout init {payload.get('readout_init', 'mup')}, "
+                        f"not {args.readout_init}"
+                    )
                 print(f"[seed {seed}] loaded {warm_path.name}", flush=True)
             else:
                 load_state(base, joint_state)
@@ -664,7 +846,7 @@ def main(argv: list[str] | None = None) -> None:
                     args.gamma2,
                     args.lr,
                     readout_lr,
-                    args.momentum,
+                    pretrain_momentum,
                     args.pretrain_max_steps,
                     args.pretrain_min_steps,
                     args.plateau_window,
@@ -678,6 +860,8 @@ def main(argv: list[str] | None = None) -> None:
                         "seed": seed,
                         "hidden_lr": args.lr,
                         "readout_lr": readout_lr,
+                        "momentum": pretrain_momentum,
+                        "readout_init": args.readout_init,
                     },
                     warm_path,
                 )
@@ -690,12 +874,20 @@ def main(argv: list[str] | None = None) -> None:
             for ratio in ratios:
                 for lambda0 in lambda0s:
                     cell_id = f"{protocol}_s{seed}_l{lambda0:.8g}_r{ratio:.8g}"
+                    if noisy:  # never collides with the deterministic cell of the same grid point
+                        cell_id += f"_T{temperature.initial:.3g}_n{args.noise_seed}"
                     if cell_id in completed:
                         print(f"skip {cell_id}", flush=True)
                         continue
 
                     load_state(base, protocol_states[protocol])
                     decays = decay_coefficients(lambda0, ratio)
+                    noise_generator = None
+                    if noisy:
+                        stream_seed = noise_stream_seed(args.noise_seed, seed, protocol,
+                                                        lambda0, ratio)
+                        noise_generator = torch.Generator(device=device)
+                        noise_generator.manual_seed(stream_seed)
                     final, trajectory = train_cell(
                         base,
                         data,
@@ -710,6 +902,8 @@ def main(argv: list[str] | None = None) -> None:
                         args.plateau_window,
                         args.plateau_tol,
                         args.snapshot_every,
+                        temperature=temperature,
+                        noise_generator=noise_generator,
                     )
                     common = {
                         "cell_id": cell_id,
@@ -729,6 +923,16 @@ def main(argv: list[str] | None = None) -> None:
                         "hidden_lr": args.lr,
                         "readout_lr": readout_lr,
                     }
+                    if args.readout_init != "mup":
+                        common["readout_init"] = args.readout_init
+                    if noisy:  # also lands in result rows, trajectories and checkpoints
+                        common.update({
+                            **temperature.as_record(),
+                            "noise_seed": args.noise_seed,
+                            "noise_stream_seed": stream_seed,
+                            "momentum": args.momentum,
+                            "pretrain_momentum": pretrain_momentum,
+                        })
                     append_rows(results_path, [{**common, **final}])
                     append_rows(trajectories_path, [{**common, **row} for row in trajectory])
                     if args.save_checkpoints:

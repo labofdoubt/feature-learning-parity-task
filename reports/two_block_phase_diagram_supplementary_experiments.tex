@@ -1,0 +1,163 @@
+\documentclass[10pt]{article}
+\usepackage[margin=0.55in]{geometry}
+\usepackage{amsmath,amssymb,booktabs,graphicx,microtype}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{3pt}
+\setlength{\abovedisplayskip}{4pt}
+\setlength{\belowdisplayskip}{4pt}
+\setlength{\textfloatsep}{5pt}
+\renewcommand{\arraystretch}{1.08}
+
+\title{\vspace{-1.15cm}\textbf{Two-Block Phase Diagram:\\Supplementary Experiments and Seed Dependence}}
+\author{}
+\date{\vspace{-1.25cm}}
+
+\begin{document}
+\maketitle
+\vspace{-0.72cm}
+
+\textbf{Purpose.}
+This supplement records the training-history and numerical-control experiments omitted from
+the concise theory comparison.  The full sweep contains three independent initialization
+seeds (0, 1, 2), 72 decay cells per seed, and two matched protocols per cell.
+
+\textbf{The two protocols were both run.}
+\emph{Joint} training starts from the random initialization and trains both degree-2 parents
+and the degree-4 target simultaneously, with every parameter trainable.  \emph{Parent-warm}
+starts from the same seeded base model, first trains only $E,V_1,W_{d2}$ on the two parent
+targets read from $h_1$, and then unfreezes the entire model and trains the identical final
+objective as joint.  There are 216 runs of each protocol (432 total).  Thus protocol
+differences isolate training history, not architecture or final loss.
+
+\textbf{History changes the circuit.}
+The two protocols selected different phase labels in 128 of 216 matched
+$(\text{seed},\lambda_0,\lambda_1/\lambda_2)$ comparisons (59.3\%).  Of those 128 changes,
+122 were $H_D\!\to H_C$ from joint to parent-warm, three were
+suppressed$\to H_C$, and three were suppressed$\to H_D$.  Parent warming therefore exposes
+a broad compositional basin that joint training almost always misses.  It is not universally
+the lower-objective basin: parent-warm had lower final objective in 90/216 comparisons
+(41.7\%), although its mean objective difference was $-0.0488$.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.94\textwidth]{../analysis_output/two_block_phase_diagram/supplementary/protocol_phase_comparison.pdf}
+\vspace{-7pt}
+\caption{\textbf{Protocol-level phase diagrams.}  Top: majority phase over three seeds for
+joint, parent-warm, and the lower-objective protocol used by the main report.  Bottom:
+matched-seed disagreement, parent-warm minus joint objective, and the increase in total
+$2+2\!\to4$ share.  The near-unity disagreement band is the compositional accessibility
+window opened by parent pretraining.}
+\end{figure}
+
+\clearpage
+\textbf{Degree-4-only objective comparison.}
+To separate target fitting from the parent losses and shared hidden-weight costs, define
+\[
+L_4=\frac{\gamma_4}{2}\operatorname{MSE}_4,
+\qquad
+J_4^{\rm spec}=L_4+\frac{\lambda_4}{2}\|w_4\|^2.
+\]
+The first quantity is the degree-4 data term alone; the second adds the only regularizer
+uniquely attributable to the degree-4 target.  Hidden-weight decay cannot be assigned
+unambiguously to one task and is therefore excluded.  Here $\gamma_4=2$, so $L_4$ equals
+the reported degree-4 MSE.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.82\textwidth]{../analysis_output/two_block_phase_diagram/supplementary/d4_only_objective_difference.pdf}
+\vspace{-7pt}
+\caption{\textbf{Degree-4-only parent-warm minus joint differences, averaged over the
+three matched seeds.}  Blue means parent-warm has the smaller value and red means joint
+does.  The signed-log color normalization is linear inside $|\Delta|<10^{-7}$ and
+logarithmic outside it, allowing differences from $10^{-9}$ to order one to remain visible.
+Across most active cells both protocols fit parity nearly perfectly; parent-warm usually has
+a slightly larger $L_4$ even when it forms the desired circuit.  The isolated order-one blue
+cells arise when joint training suppresses the degree-4 task while parent warming keeps it
+active.}
+\end{figure}
+
+This comparison also explains why the lower-total-objective map cannot be inferred from
+degree-4 fit alone: its selection additionally includes the two parent losses and all five
+weight-decay terms.  Circuit identity and the last few digits of degree-4 MSE are distinct
+diagnostics.  Parent-warm has smaller $L_4$ in only 8/216 matched runs and smaller
+$J_4^{\rm spec}$ in 70/216.  Nevertheless, the mean differences are negative because the
+few order-one joint-suppression failures outweigh the many positive differences of only
+$10^{-9}$--$10^{-3}$.
+
+\clearpage
+\textbf{Seed-by-seed robustness.}
+
+\begin{center}
+\begin{tabular}{@{}clll@{}}
+\toprule
+Seed & Joint: $H_C/H_D$/suppressed & Parent-warm: $H_C/H_D$/suppressed & Disagreement \\
+\midrule
+0 & $3/52/17$ & $46/11/15$ & $44/72$ (61.1\%) \\
+1 & $3/52/17$ & $44/13/15$ & $42/72$ (58.3\%) \\
+2 & $3/52/17$ & $44/13/15$ & $42/72$ (58.3\%) \\
+\midrule
+All & $9/156/51$ & $134/37/45$ & $128/216$ (59.3\%) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The joint maps have identical phase counts for all three seeds.  Parent-warm seeds 1 and 2
+are identical in phase count, while seed 0 differs by only two cells.  The shape of the
+compositional window is therefore reproducible; the large protocol effect is not caused by a
+single favorable seed.  Seed variation is concentrated near the staircase boundary between
+$H_C$ and $H_D$ and near task suppression.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.70\textwidth]{../analysis_output/two_block_phase_diagram/supplementary/seed_protocol_phase_grids.pdf}
+\vspace{-7pt}
+\caption{\textbf{All six empirical phase maps.}  Each row fixes the random initialization;
+the left and right panels differ only by parent pretraining before the common fully unfrozen
+objective.  The repeated left/right contrast makes the history dependence directly visible.}
+\end{figure}
+
+\clearpage
+\textbf{Numerical control 1: failed uniform-learning-rate launch.}
+The first width-1024 launch used float64 full-batch SGD with momentum 0.9 and learning rate
+$0.01$ for every parameter group.  This is incompatible with the muP readout initialization
+$W=O(1/N)$: individual readout gradients are $O(1)$, so the first updates overwhelm their
+initial scale.  Parent-pretraining states became non-finite and every worker raised a
+non-finite main objective at step 8.  No valid phase cell was produced.  This establishes a
+numerical requirement---scale the readout learning rate as $1/N$---not a circuit-phase result.
+
+\textbf{Numerical control 2: corrected width-1024 smoke test.}
+Before restarting the sweep we tested seed 0 at $\lambda_0=0.01$ and
+$\lambda_1/\lambda_2=1$, using $\eta_{E,V}=0.01$, $\eta_W=0.01/1024$, 1,000 parent-warmup
+steps, and 1,000 final-objective steps.
+
+\begin{center}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Protocol & Phase & Objective & $A_4$ & $R$ & $f_C$ & $\|\nabla J\|$ \\
+\midrule
+Joint & $H_D$ & 2.29699 & 0.9453 & 0.4454 & 0.1131 & 1.0490 \\
+Parent-warm & $H_C$ & 2.28398 & 0.9445 & 0.5879 & 0.5844 & 0.9698 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Both runs stayed finite, and the parent-warm run already entered the compositional basin.
+Because the gradient norms were still order one, this was only a stability and basin test;
+it was not used as stationary phase evidence.
+
+\textbf{Finite-time qualification.}
+Only 99/432 full-sweep runs met the plateau criterion; 333 reached the 50k-step cap.  The
+phase maps therefore describe circuits found by the stated finite-time protocols, while the
+lower-objective aggregation is only a best-observed proxy for the zero-temperature theory.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.68\textwidth]{../analysis_output/two_block_phase_diagram/supplementary/convergence_diagnostics.pdf}
+\vspace{-7pt}
+\caption{\textbf{Convergence diagnostics.}  Mean training fraction and final raw gradient
+norm over the three seeds.  Weak and moderate decay usually consume the full budget; rapid
+termination is concentrated in strongly regularized or suppressed cells.}
+\end{figure}
+
+\end{document}

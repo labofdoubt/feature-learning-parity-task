@@ -1,0 +1,170 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+
+\title{A Simple Accessibility Theory of Parity Circuit Competition}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Setup}
+
+Consider a pure-ReLU residual block. Suppose a neuron combines \(p\) orthogonal parent Walsh modes
+\[
+q_1,\ldots,q_p,\qquad \|q_i\|=Q,
+\]
+with balanced signs. If \(v\) is the neuron's weight vector, the preactivation amplitude of each parent is
+\[
+\gamma=\frac{\|v\|Q}{\sqrt p}.
+\]
+
+For a balanced \(p\)-parent ReLU gate, the coefficient of the product Walsh mode is
+\[
+c_p=\kappa_p\gamma,
+\]
+with
+\[
+|\kappa_2|=\frac12,\qquad
+|\kappa_4|=\frac14,\qquad
+|\kappa_8|=\frac{5}{32}.
+\]
+
+Define the accessibility efficiency
+\[
+R\equiv \frac{|c_p|}{\|v\|}
+=\frac{|\kappa_p|Q}{\sqrt p}.
+\]
+Thus \(R\) measures how much of the desired child mode is produced per unit hidden-weight norm. The simple theory predicts that, when several routes to the same target mode are simultaneously available, the route with larger \(R\) is more accessible.
+
+\section{\texorpdfstring{\(2+2\to4\)}{2+2 to 4} versus \texorpdfstring{\(1+1+1+1\to4\)}{1+1+1+1 to 4}}
+
+Let \(Q_1\) be the norm of each relevant singleton mode and \(Q_2\) the norm of each relevant degree-2 mode.
+
+For the direct route \(1+1+1+1\to4\), we have \(p=4\), \(Q=Q_1\), and \(|\kappa_4|=1/4\):
+\[
+R_{1^4}
+=
+\frac{(1/4)Q_1}{\sqrt4}
+=
+\frac{Q_1}{8}.
+\]
+
+For the compositional route \(2+2\to4\), we have \(p=2\), \(Q=Q_2\), and \(|\kappa_2|=1/2\):
+\[
+R_{2+2}
+=
+\frac{(1/2)Q_2}{\sqrt2}
+=
+\frac{Q_2}{2\sqrt2}.
+\]
+
+The two routes are equally efficient when
+\[
+\frac{Q_2}{2\sqrt2}
+=
+\frac{Q_1}{8},
+\]
+hence
+\[
+\boxed{
+\frac{Q_2}{Q_1}
+=
+\frac{1}{\sqrt8}
+\approx 0.3536.
+}
+\]
+
+Therefore
+\[
+\frac{Q_2}{Q_1}>\frac1{\sqrt8}
+\]
+predicts that \(2+2\to4\) is more accessible, while below this ratio the direct \(1^4\to4\) route is more accessible.
+
+\section{\texorpdfstring{\(4+4\to8\)}{4+4 to 8} versus \texorpdfstring{\(1+\cdots+1\to8\)}{direct degree-8}}
+
+Let \(Q_4\) be the norm of each relevant degree-4 parent mode.
+
+For the direct route \(1+\cdots+1\to8\), we have \(p=8\), \(Q=Q_1\), and \(|\kappa_8|=5/32\):
+\[
+R_{1^8}
+=
+\frac{5}{32}\frac{Q_1}{\sqrt8}.
+\]
+
+For \(4+4\to8\), we have \(p=2\), \(Q=Q_4\), and \(|\kappa_2|=1/2\):
+\[
+R_{4+4}
+=
+\frac{Q_4}{2\sqrt2}.
+\]
+
+Equating the two,
+\[
+\frac{Q_4}{2\sqrt2}
+=
+\frac{5Q_1}{32\sqrt8}.
+\]
+Since \(\sqrt8=2\sqrt2\),
+\[
+\boxed{
+\frac{Q_4}{Q_1}
+=
+\frac{5}{32}
+=
+0.15625.
+}
+\]
+
+Therefore
+\[
+\frac{Q_4}{Q_1}>0.15625
+\]
+predicts that \(4+4\to8\) is more accessible, while below this ratio the direct \(1^8\to8\) route is more accessible.
+
+\section{Experimental method}
+
+The theory can be tested while separating circuit accessibility from the dynamics by which the parent features are learned.
+
+\begin{enumerate}
+    \item Train a first ReLU residual block to produce the required parent parity modes. For the degree-4 experiment, train degree-2 parents; for the degree-8 experiment, train degree-4 parents.
+
+    \item Freeze the embedding and the trained first block.
+
+    \item Rescale the frozen block by
+    \[
+    V^{(1)}\mapsto \alpha V^{(1)}.
+    \]
+    By ReLU homogeneity,
+    \[
+    \operatorname{ReLU}(\alpha z)=\alpha\operatorname{ReLU}(z),
+    \]
+    so this changes the strength of the learned parent modes without changing the learned circuit itself.
+
+    \item For every \(\alpha\), directly measure the Walsh-mode norms in the frozen residual stream, in particular
+    \[
+    \frac{Q_2}{Q_1}
+    \quad\text{or}\quad
+    \frac{Q_4}{Q_1}.
+    \]
+    These measured ratios, rather than \(\alpha\) itself, are the theoretical control variables.
+
+    \item Add a fresh ReLU block and readout and train only them on the higher-degree target.
+
+    \item Determine which circuit forms from the Walsh decomposition of the new block's preactivations. A \(2+2\to4\) neuron should be dominated by its two degree-2 parents; a \(4+4\to8\) neuron by its two degree-4 parents; a direct route should be dominated by the relevant singleton modes.
+\end{enumerate}
+
+The key predictions are
+\[
+\boxed{\frac{Q_2}{Q_1}=\frac1{\sqrt8}}
+\]
+for the degree-4 experiment and
+\[
+\boxed{\frac{Q_4}{Q_1}=\frac5{32}}
+\]
+for the degree-8 experiment.
+
+These predictions assume pure ReLU, approximately equal-norm and orthogonal parent modes, and balanced gates.
+
+\end{document}

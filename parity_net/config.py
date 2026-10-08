@@ -44,14 +44,35 @@ class TaskConfig:
     # Hierarchical non-uniform distribution parameter (0 = uniform).
     data_rho: float = 0.0
     # Which data distribution to use when data_rho > 0.
-    #   "hierarchical"        – existing top-down biased tree all the way to individual bits.
-    #   "hierarchical_degree2"– biased tree stops at degree-2 latents z_i; each z_i is then
-    #                           expanded into two bits via a fresh uniform random sign, so
-    #                           E[S * x_j] = 0 for every individual bit x_j.
-    #   "uniform"             – always sample uniformly regardless of data_rho.
-    # Default is "hierarchical" so that existing configs with data_rho > 0 and no
-    # data_distribution key continue to behave as before.
+    #   "hierarchical"                   – asymmetric biased tree all the way to individual bits.
+    #   "hierarchical_degree2"           – asymmetric biased tree stops at degree-2 latents;
+    #                                      each z_i expanded uniformly, so E[S*x_j]=0.
+    #   "hierarchical_symmetric"         – symmetric biased tree all the way to bits; all
+    #                                      nodes at the same depth are statistically equivalent;
+    #                                      E[S*y_d] = (rho/2)^log2(k/d).
+    #   "hierarchical_symmetric_degree2" – symmetric biased tree stops at degree-2 latents;
+    #                                      each z_i expanded uniformly, so E[S*x_j]=0.
+    #   "walsh_single_mode"              – p(x) = 2^{-d} (1 + rho * chi_A(x)) with a single
+    #                                      Walsh mode A given by data_walsh_mode; the only
+    #                                      nonzero moment is E[chi_A] = rho. Allows rho in
+    #                                      [-1, 1] (hierarchical variants require [0, 1)).
+    #   "walsh_clusters"                 – latent mixture of single-Walsh-mode clusters from
+    #                                      data_walsh_clusters; the marginal is
+    #                                      2^{-d}[1 + sum_j alpha_j rho_j chi_{A_j}(x)].
+    #                                      Per-cluster rho values apply; data_rho is ignored.
+    #   "uniform"                        – always sample uniformly regardless of data_rho.
+    # Default is "hierarchical" so that existing configs continue to behave as before.
     data_distribution: str = "hierarchical"
+    # Walsh support A for walsh_single_mode, as ZERO-BASED input coordinates
+    # (e.g. [2, 3, 4, 5] means chi_A = x_2*x_3*x_4*x_5 in 0-based / x3*x4*x5*x6 in
+    # 1-based notation). Required nonempty for walsh_single_mode; ignored otherwise.
+    data_walsh_mode: list[int] | None = None
+    # Cluster list for walsh_clusters: each entry is {mode: [zero-based indices],
+    # rho: float in [-1, 1], weight: float >= 0}. Weights are relative and
+    # normalized internally (alpha_j = w_j / sum w); at least one must be positive.
+    # Modes may overlap or repeat (duplicate supports add their alpha_j*rho_j).
+    # Required nonempty for walsh_clusters; ignored otherwise.
+    data_walsh_clusters: list[dict] | None = None
     # For uniform exhaustive eval: independent irrelevant-bit draws per relevant config.
     eval_noise_repeats: int = 2
     # When True, training loss covers only the root parity (degree relevant_dim).
@@ -92,6 +113,11 @@ class TrainingConfig:
     validate_every: int = 100
     progress_every: int = 0
     checkpoint_every: int = 1_000
+    # When true, checkpoints follow a logarithmic step grid instead of
+    # checkpoint_every: {1..9}x10, {1..9}x100, ... up to num_steps (num_steps
+    # always included). Useful for analyses that need dense early-training
+    # coverage. checkpoint_every is ignored in this mode.
+    checkpoint_log_scale: bool = False
     output_dir: str = "runs/parity"
     barrier_c: float | None = None
     barrier_lambda: float = 10.0

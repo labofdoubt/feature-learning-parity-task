@@ -75,10 +75,10 @@ echo "── Combining all plots into results.pdf ──────────
 python3 scripts/combine_plots.py --run-dir "$RUN_DIR"
 
 echo ""
-echo "── Syncing to Google Drive ─────────────────────────────────"
-REMOTE="gdrive:parity/runs/$(basename "$RUN_DIR")"
-bash "$(dirname "$0")/backup_runs.sh" "$RUN_DIR" "$REMOTE" \
-  || echo "[backup] Warning: Drive sync failed — results remain local"
+echo "── Google Drive sync ───────────────────────────────────────"
+echo "Handled in the background by the standing watchers (tmux session 'backup'):"
+echo "  light tier every 60s; all-checkpoints (verified) every 600s."
+echo "No blocking push here — next run can start immediately."
 
 echo ""
 echo "Done."

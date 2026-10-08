@@ -1,0 +1,83 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1.8cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{2pt}\setlength{\parindent}{0pt}
+
+\title{\vspace{-1.4cm}Neuron mechanisms IV: amplifiers pass parities through the linear
+window of $\mathrm{relu}(\tanh)$\\
+\large \texttt{wd3\_k0\_N2048}, step 500k --- post-nonlinearity units, uniform evaluation data}
+\author{}\date{\vspace{-1.2cm}}
+
+\begin{document}\maketitle\vspace{-1.9cm}
+
+\section*{The puzzle and the measurement}
+\emph{Amplifier} neurons (blocks 2--3) receive an already-assembled parity: at least $90\%$
+of their pre-activation variance lies on their own $\chi_{d8}$ (276 active neurons) or
+$\chi_{d4}$ (22), and they re-emit that same mode at high purity. Since the parity is a
+$\pm1$ signal, one would expect $\phi=\mathrm{relu}(\tanh)$ to cut the negative half and
+distort the feature. It does not, because the input is not centered. Writing the
+pre-activation on the own parity $\chi$ as $z = c + \gamma\chi$ and measuring both constants
+per neuron gives Table~\ref{tab} and Fig.~\ref{fig:amp}: \textbf{the DC offset exceeds the
+mode amplitude}, $c > |\gamma|$, for 297 of 298 amplifiers (median $c/|\gamma|\approx1.4$).
+Both conditional levels $c\pm|\gamma|$ are therefore positive --- $z$ never reaches the relu
+corner. Moreover the levels are small: the 95th-percentile upper level is $0.11$ ($d8$) and
+$0.22$ ($d4$), where $\tanh$ deviates from the identity by $z^2/3\leq0.4\%/1.6\%$. So on its
+operating window the neuron is a linear wire, $a\approx c+\gamma\chi$.
+
+\begin{table}[h!]\centering\small
+\begin{tabular}{lcccccccc}
+\toprule
+ & $n$ & med.\ $c$ & med.\ $|\gamma|$ & $c>|\gamma|$ & $z$ 95\% & $\dfrac{\Delta a}{\Delta z}$ &
+ $\dfrac{|\langle a\chi\rangle|}{|\gamma|}$ & vs.\ clipped $\tfrac{\tanh\gamma}{2}$ \\
+\midrule
+$d8$ amplifiers & 276 & 0.040 & 0.028 & 275/276 & 0.106 & 0.996 & 0.995 & $1.99\times$ \\
+$d4$ amplifiers & 22 & 0.086 & 0.061 & 22/22 & 0.218 & 0.991 & 0.992 & $1.99\times$ \\
+\bottomrule
+\end{tabular}
+\caption{Per-neuron fits of $z=c+\gamma\chi$ and linearity checks. $\Delta a/\Delta z$: output
+swing over input swing between the two parity classes; $|\langle a\chi\rangle|/|\gamma|$:
+output over input Walsh coefficient. Both are $\approx\!1$, i.e.\ twice what half-wave
+rectification of a centered input would leave.}
+\label{tab}
+\end{table}
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.93\textwidth]{fig8_amplifier_linear.pdf}\vspace{-4pt}
+\caption{Left: exemplar $d8$ amplifier --- the two conditional distributions of $z$ (for
+$\chi=\pm1$) both sit on the positive segment of $\mathrm{relu}(\tanh)$, where the curve is
+indistinguishable from the identity. Middle: population scatter of offset $c$ vs.\ amplitude
+$|\gamma|$; every neuron but one lies above the $c=|\gamma|$ line, outside the clipped
+region. Right: output vs.\ input coefficient --- the points follow the identity
+(linear pass-through), not the half-wave prediction $\tanh(\gamma)/2$ (dashed).}
+\label{fig:amp}
+\end{figure}
+
+\section*{Why the offset is there, and what ``amplification'' means}
+The offset is not a learned bias (the block linear layers have none). It is inherited from
+the previous rectification: upstream carriers of a parity are one-sided units with
+activations $\approx t(1+\chi)/2$, i.e.\ each delivers the mode with a DC component of the
+same size attached. Any weighted sum of such features arrives with $c\sim|\gamma|$
+automatically --- the DC produced by one layer's relu is exactly what shields the feature
+from the next layer's relu.
+
+The gain is therefore not pointwise ($|\langle a\chi\rangle| = |\gamma|$, nothing is
+amplified inside the neuron). The amplification is collective: the $V$-row coherently sums
+many weak copies of $\chi$ spread across the 2048 residual channels into a single clean
+$\gamma$ (reading the stream is non-destructive), and the neuron writes a fresh copy back at
+purity $0.94$/$0.92$ (median share of $\mathrm{Var}\,a$ on the own mode) --- versus $0.044$
+for the raw-bit gates that created $d8$. Hundreds of such units re-emitting in parallel grow
+the total mode power of the stream from block to block. Both polarities are present
+($148{+}/128{-}$ for $d8$, $8{+}/14{-}$ for $d4$), so downstream sums can recover the full
+$\pm1$ swing and cancel the accumulated DC. This completes the contrast with the creator
+mechanisms: gates and corner units sit \emph{on} the relu corner and use it to compute new
+modes, while amplifiers are biased \emph{past} the corner so as to transport existing modes
+unchanged.
+
+\vspace{2pt}\footnotesize
+Artifacts: \texttt{gdrive:parity/analysis\_output/neuron\_mechanisms/wd3\_k0\_N2048/step\_00500000/}
+(\texttt{amplifier\_stats.csv}, this figure and report; companion $d2$/$d4$/$d8$/$d16$
+reports in the same folder).
+\end{document}

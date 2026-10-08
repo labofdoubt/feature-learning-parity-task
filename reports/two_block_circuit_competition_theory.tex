@@ -1,0 +1,426 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,booktabs}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{5pt}
+\setlength{\parindent}{0pt}
+
+\newcommand{\eone}{\eta_{D_1}}
+\newcommand{\etwo}{\eta_{D_2}}
+\newcommand{\ecomp}{\eta_C}
+
+\title{A Stationary Theory of Degree-4 Circuit Competition in a Two-Block ReLU Network}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+The frozen-representation theory compares a direct \(1+1+1+1\to4\) gate in block 2 with a
+compositional \(2+2\to4\) gate in block 2.  When block 1 is also allowed to learn the degree-4
+target, there is an additional direct route.  A restricted comparison of one compositional
+route with two coherently pooled direct routes moves the equal-norm boundary from
+\(Q_2/Q_1=1/\sqrt8\) to \(Q_2/Q_1=1/2\).  This is not, however, the unrestricted global
+minimum: the block-1 direct route can share the readout with either kind of block-2 gate.  In
+that full stationary problem it is a common branch and cancels from the choice between the two
+block-2 mechanisms.  The block-2 gate boundary remains \(Q_2/Q_1^{(1)}=1/\sqrt8\), but the
+winning solution is generically a hybrid containing both block-1 direct signal and block-2
+signal.  Thus a pure \(2+2\to4\) phase cannot be expected without suppressing, penalizing, or
+geometrically misaligning the block-1 direct route.  We give the general competition equation,
+unequal-decay and finite-temperature extensions, a stationary order-parameter formulation for
+joint \(d2+d4\) training, and controlled experiments that distinguish the alternatives.
+\end{abstract}
+
+\section{Architecture and three candidate gates}
+
+Write the two-block residual network as
+\begin{align}
+h_1(x)&=h_0(x)+\sigma(V_1h_0(x)),\\
+h_2(x)&=h_1(x)+\sigma(V_2h_1(x)),\\
+\widehat y_4(x)&=w^\top h_2(x),
+\end{align}
+where \(\sigma\) is ReLU.  Let
+\begin{itemize}
+    \item \(Q_1^{(0)}\) be the norm of each relevant singleton Walsh vector in \(h_0\);
+    \item \(Q_1^{(1)}\) be the norm of each relevant singleton Walsh vector in \(h_1\);
+    \item \(Q_2\) be the norm of each of the two parent vectors \(q_{12},q_{34}\) in \(h_1\).
+\end{itemize}
+The three ideal balanced gates are
+\begin{align}
+D_1 &: 1+1+1+1\longrightarrow4 \quad\hbox{in block 1},\\
+D_2 &: 1+1+1+1\longrightarrow4 \quad\hbox{in block 2},\\
+C &: 2+2\longrightarrow4 \quad\hbox{in block 2}.
+\end{align}
+Using \(|\kappa_4|=1/4\) and \(|\kappa_2|=1/2\), their target-mode efficiencies per hidden
+weight norm are
+\begin{equation}
+\boxed{
+\eone=\frac{Q_1^{(0)}}8,
+\qquad
+\etwo=\frac{Q_1^{(1)}}8,
+\qquad
+\ecomp=\frac{Q_2}{2\sqrt2}.}
+\label{eq:etas}
+\end{equation}
+This section initially treats \(Q_1^{(0)},Q_1^{(1)},Q_2\) as fixed order parameters.  Their
+self-consistent adaptation is considered later.
+
+\section{One homogeneous route: why weight decay compares efficiencies}
+
+For one route of efficiency \(\eta\), let \(u\) denote its hidden-weight norm and \(v\) its
+readout norm.  An aligned rank-one realization of target amplitude \(A\geq0\) obeys
+\begin{equation}
+A=\eta uv.
+\end{equation}
+The smallest quadratic parameter cost is
+\begin{equation}
+\min_{\eta uv=A}\frac12(u^2+v^2)=\frac{A}{\eta},
+\label{eq:one-route-cost}
+\end{equation}
+attained at \(u=v=\sqrt{A/\eta}\).  With squared error and common weight decay, the reduced
+objective is
+\begin{equation}
+\mathcal J_\eta(A)=\frac12(1-A)^2+\lambda\frac{A}{\eta}.
+\end{equation}
+Consequently
+\begin{equation}
+A_\eta^*=\left[1-\frac{\lambda}{\eta}\right]_+,
+\qquad
+\mathcal J_\eta^*=
+\begin{cases}
+\dfrac{\lambda}{\eta}-\dfrac{\lambda^2}{2\eta^2},&\lambda<\eta,\\[4pt]
+\dfrac12,&\lambda\geq\eta.
+\end{cases}
+\label{eq:amplitude}
+\end{equation}
+Thus larger \(\eta\) has lower stationary cost for every nonsuppressed solution.  A common
+\(\lambda\) sharpens selection and sets the suppression scale, but does not move a boundary
+defined by equality of efficiencies.  Different normalizations of the MSE rescale the stated
+suppression value, not the circuit boundary.
+
+\section{Parallel routes and the role of feature alignment}
+
+The new issue is that the block-1 and block-2 target features are added in the same residual
+stream before a shared readout.  Let their normalized target-feature directions have cosine
+\(\rho\).  If their individual efficiencies are \(a,b\), their best joint efficiency is the
+largest singular value of the two-column feature map:
+\begin{equation}
+\eta_{\parallel}^2(a,b;\rho)=\frac12\left[a^2+b^2+
+\sqrt{(a^2-b^2)^2+4a^2b^2\rho^2}\right].
+\label{eq:parallel-general}
+\end{equation}
+Two limits are useful:
+\begin{equation}
+\eta_{\parallel}(a,b;0)=\max(a,b),
+\qquad
+\eta_{\parallel}(a,b;1)=\sqrt{a^2+b^2}.
+\label{eq:parallel-limits}
+\end{equation}
+Orthogonal routes cannot share readout norm and the more efficient one wins.  Coherently aligned
+routes share the readout and add in root-sum-square.  Since the network can in principle place a
+block-1 target feature in the same residual coordinate as a block-2 target feature, the aligned
+limit is the natural zero-temperature global-minimum prediction unless auxiliary constraints
+prevent alignment.  Measuring \(\rho\) is therefore essential.
+
+\section{Restricted pooled-direct boundary}
+
+First impose a restricted two-family comparison:
+\begin{itemize}
+    \item the direct family may use \(D_1\) and \(D_2\) together;
+    \item the compositional family may use \(C\), but is forbidden from also using \(D_1\).
+\end{itemize}
+Then
+\begin{equation}
+\eta_D=\eta_{\parallel}(\eone,\etwo;\rho_D),
+\qquad
+\eta_C=\ecomp,
+\end{equation}
+and the restricted phase boundary is
+\begin{equation}
+\boxed{\ecomp=\eta_{\parallel}(\eone,\etwo;\rho_D).}
+\label{eq:restricted-general}
+\end{equation}
+In the fully aligned case this becomes
+\begin{equation}
+\frac{Q_2}{2\sqrt2}
+=\frac18\sqrt{\left(Q_1^{(0)}\right)^2+\left(Q_1^{(1)}\right)^2},
+\end{equation}
+or
+\begin{equation}
+\boxed{
+Q_{2,c}=\frac{1}{2\sqrt2}
+\sqrt{\left(Q_1^{(0)}\right)^2+\left(Q_1^{(1)}\right)^2}.}
+\label{eq:restricted-boundary}
+\end{equation}
+If the singleton norms are equal, \(Q_1^{(0)}=Q_1^{(1)}=Q_1\), this gives the simple new
+number
+\begin{equation}
+\boxed{\left.\frac{Q_2}{Q_1}\right|_{c,\mathrm{restricted}}=\frac12.}
+\label{eq:half}
+\end{equation}
+The shift \(1/\sqrt8\to1/2\) is a real prediction for this restricted comparison: two coherent
+direct production sites lower the direct family's norm cost.  It is also an upper endpoint of
+the alignment-dependent boundary.  For equal direct efficiencies, varying
+\(0\leq|\rho_D|\leq1\) moves the threshold continuously from \(1/\sqrt8\) to \(1/2\).
+
+\section{The unrestricted two-block minimum is hybrid}
+
+Equation~\eqref{eq:half} is not the generic phase boundary of the unrestricted architecture.
+The reason is simple: if \(D_1\) is available, it can cooperate with a compositional block-2
+gate just as it can cooperate with a direct block-2 gate.  The two correct competing families
+are therefore
+\begin{align}
+H_D&=D_1+D_2, &
+\eta_{H_D}&=\eta_{\parallel}(\eone,\etwo;\rho_D),\\
+H_C&=D_1+C, &
+\eta_{H_C}&=\eta_{\parallel}(\eone,\ecomp;\rho_C).
+\end{align}
+The general stationary competition equation is
+\begin{equation}
+\boxed{
+\eta_{\parallel}(\eone,\ecomp;\rho_C)
+=
+\eta_{\parallel}(\eone,\etwo;\rho_D).}
+\label{eq:full-boundary}
+\end{equation}
+If both families can attain the same alignment---in particular, if both attain coherent
+alignment---\(\eta_{\parallel}\) is monotone in its second argument, so the common \(D_1\)
+branch cancels.  The choice of block-2 gate is then
+\begin{equation}
+\ecomp\gtrless\etwo,
+\end{equation}
+and hence
+\begin{equation}
+\boxed{
+\left.\frac{Q_2}{Q_1^{(1)}}\right|_{c,\mathrm{block\ 2\ gate}}
+=\frac1{\sqrt8}.}
+\label{eq:old-boundary}
+\end{equation}
+The additional direct route does not move this particular boundary.  Instead, it changes the
+nature and cost of both phases.  In the aligned limit,
+\begin{equation}
+\eta_{H_D}=\sqrt{\eone^2+\etwo^2},
+\qquad
+\eta_{H_C}=\sqrt{\eone^2+\ecomp^2},
+\end{equation}
+so both tolerate stronger decay than their single-block counterparts.
+
+Moreover, the optimal \(H_C\) solution is not a pure compositional circuit.  At the balanced
+minimum, the two target-amplitude contributions are proportional to squared efficiencies:
+\begin{equation}
+f_{D_1\mid H_C}=\frac{\eone^2}{\eone^2+\ecomp^2},
+\qquad
+f_{C\mid H_C}=\frac{\ecomp^2}{\eone^2+\ecomp^2}
+=\frac{8Q_2^2}{(Q_1^{(0)})^2+8Q_2^2}.
+\label{eq:hybrid-fraction}
+\end{equation}
+For \(Q_1^{(0)}=Q_1^{(1)}\), the compositional share is \(1/2\) at the block-2 gate boundary
+and grows smoothly above it.  More generally, achieving \(f_C\geq p\) requires
+\begin{equation}
+\frac{Q_2}{Q_1^{(0)}}\geq
+\frac1{2\sqrt2}\sqrt{\frac{p}{1-p}}.
+\label{eq:purity}
+\end{equation}
+This is a purity condition, not a phase boundary.  It quantifies how strong the parents must be
+to make the compositional contribution dominate the unavoidable block-1 shortcut.
+
+\section{Unequal decay exposes how to force composition}
+
+Let the weight-decay coefficients be \(\lambda\rho_1\) on target-specific block-1 weights,
+\(\lambda\rho_2\) on block-2 weights, and \(\lambda\rho_w\) on the readout.  In the aligned
+case, a route in block \(\ell\) contributes squared effective efficiency
+\(\eta_\ell^2/(\rho_\ell\rho_w)\).  The restricted direct-versus-compositional boundary is
+\begin{equation}
+\frac{\ecomp^2}{\rho_2}
+=\frac{\eone^2}{\rho_1}+\frac{\etwo^2}{\rho_2},
+\end{equation}
+or
+\begin{equation}
+\boxed{
+8Q_2^2=(Q_1^{(1)})^2+\frac{\rho_2}{\rho_1}(Q_1^{(0)})^2.}
+\label{eq:unequal-decay}
+\end{equation}
+Penalizing target formation in block 1 more strongly (\(\rho_1\gg\rho_2\)) continuously
+returns the old \(1/\sqrt8\) boundary.  Protecting block 1 from decay
+(\(\rho_1\to0\)) does the opposite: weight decay alone can never disfavor the untaxed direct
+shortcut.  This distinguishes ``protect the already learned parent representation'' from
+``leave every block-1 direction unregularized.''  A useful setup protects the parent-producing
+subspace while still penalizing new block-1 \(d4\) directions.
+
+For the unrestricted hybrid competition, the common aligned \(D_1\) term again cancels:
+\begin{equation}
+\frac{\eone^2}{\rho_1}+\frac{\ecomp^2}{\rho_2}
+\gtrless
+\frac{\eone^2}{\rho_1}+\frac{\etwo^2}{\rho_2}.
+\end{equation}
+Thus unequal block-1 decay changes the shortcut fraction and suppression scale but, under this
+fixed-representation closure, not which gate block 2 prefers.
+
+\section{A stationary theory for simultaneous parent and target learning}
+
+When \(V_1\) is trainable, \(Q_1^{(0)},Q_1^{(1)},Q_2\) are not externally fixed.  Substituting
+their initial or final measured values into a frozen-representation boundary is not a complete
+theory.  A dynamics-free generalization is nevertheless possible.  Let
+\(\Phi(Q_1^{(0)},Q_1^{(1)},Q_2)\) be the minimum loss plus regularization needed to realize the
+singleton representation and the two supervised degree-2 parents.  For
+\(r\in\{H_D,H_C\}\), define the stationary free energy
+\begin{equation}
+\boxed{
+F_r=\min_{Q_1^{(0)},Q_1^{(1)},Q_2,\,A\geq0}
+\left\{
+\Phi(Q_1^{(0)},Q_1^{(1)},Q_2)
++\frac12(1-A)^2
++\lambda\frac{A}{\eta_r(Q_1^{(0)},Q_1^{(1)},Q_2)}
+\right\}.}
+\label{eq:landau}
+\end{equation}
+The joint-training phase boundary is \(F_{H_C}=F_{H_D}\).  This is a small order-parameter
+theory rather than a parameter-space dynamical equation.  It automatically allows the
+compositional phase to strengthen \(Q_2\), and global decay to weaken it, if those changes lower
+the total stationary cost.
+
+A toy calculation shows the feedback explicitly.  Let
+\(\eta_P=Q_1^{(0)}/(2\sqrt2)\) be the efficiency for producing each degree-2 parent in block 1,
+let both parent targets have amplitude \(B\), and let their common hidden norm be \(Q_2\).
+After minimizing their readout directions, the regularization cost of the two parents is
+\begin{equation}
+\Phi_{\rm toy}(Q_2)=\frac{Q_2^2}{\eta_P^2}+\frac{B^2}{Q_2^2}.
+\label{eq:parent-potential}
+\end{equation}
+Without downstream use, its minimizer is
+\begin{equation}
+Q_{2,D}^4=B^2\eta_P^2.
+\end{equation}
+For a pure compositional downstream route of fixed amplitude \(A\), the additional cost is
+\(2\sqrt2 A/Q_2\), and the self-consistent parent strength obeys
+\begin{equation}
+\boxed{
+\frac{Q_{2,C}^4}{\eta_P^2}-B^2-\sqrt2 A Q_{2,C}=0.}
+\label{eq:self-consistent-q2}
+\end{equation}
+Hence \(Q_{2,C}>Q_{2,D}\): downstream composition creates a stationary incentive to amplify
+its own parents.  This positive feedback is absent from the frozen theory.  Equation
+\eqref{eq:landau}, with a more faithful empirically or analytically derived \(\Phi\), is the
+minimal route to a genuine two-block phase diagram without writing training dynamics.
+
+The fixed-representation results remain a controlled limit of
+Eq.~\eqref{eq:landau}: take \(\Phi\) infinitely stiff around prescribed values of the three
+order parameters.  A sensible progression is therefore stiff parents \(\to\) softly pinned
+parents \(\to\) fully joint \(d2+d4\) training.
+
+\section{Connection to a Boltzmann or field-theory description}
+
+For explicitly isotropic Langevin dynamics satisfying detailed balance, the stationary
+parameter distribution is
+\begin{equation}
+p(\theta)\propto
+\exp\left[-\frac{1}{T}\left(
+\mathcal L(\theta)+\frac\lambda2\|\theta\|^2\right)\right].
+\end{equation}
+The zero-temperature saddle is exactly the minimum-cost theory above.  Integrating parameters
+at fixed order parameters \(Q=(Q_1^{(0)},Q_1^{(1)},Q_2,A,\ldots)\) defines an effective action
+\begin{equation}
+\Gamma(Q)=E_{\min}(Q)-T S(Q),
+\end{equation}
+whose leading saddle is Eq.~\eqref{eq:landau}.  At one loop, a circuit family \(r\) acquires
+the usual curvature and multiplicity terms
+\begin{equation}
+F_r(T)\simeq E_r^*+\frac{T}{2}\log\det{}'H_r-T\log g_r.
+\label{eq:one-loop}
+\end{equation}
+In the crude exclusive-route approximation, two equivalent direct placements give
+\(g_D=2\), \(g_C=1\), and equal probability occurs at
+\begin{equation}
+E_C^*=E_D^*-T\log2.
+\label{eq:entropy-shift}
+\end{equation}
+Thus finite temperature favors the more numerous direct family even when the zero-temperature
+costs are equal.  Neural networks have much larger continuous degeneracies, so \(T\log2\) is
+only an illustration; the Hessian/entropy term, not route counting alone, is the controlled
+object.  Ordinary SGD with momentum need not sample this Boltzmann law.  The connection should
+therefore be tested with deliberately injected Langevin noise, after the zero-temperature
+stationary predictions are established.
+
+\section{Controlled experiments implied by the theory}
+
+No simultaneous-training experiment is needed first.  The cleanest next test keeps the parent
+order parameters fixed while adding only the previously missing target-specific block-1
+degrees of freedom.
+
+\paragraph{Representation.}
+Construct or pretrain a base stream with four singleton vectors and the two parent vectors,
+then freeze the parent-producing subspace.  Add a fresh trainable block-1 target adapter whose
+input contains the four singletons.  This adapter can make \(D_1\) but cannot alter \(Q_2\).
+Train it together with block 2 and the \(d4\) readout.  Applying decay to the adapter, block 2,
+and readout preserves the minimum-norm comparison while protecting the learned parents.
+
+\paragraph{Axes.}
+Sweep measured \(Q_2/Q_1^{(1)}\) densely across both \(1/\sqrt8\simeq0.354\) and \(1/2\), vary
+\(Q_1^{(0)}/Q_1^{(1)}\), and use a decay range large enough to approach the stationary
+minimum without suppressing the target.  A second sweep of \(\rho_1/\rho_2\) tests
+Eq.~\eqref{eq:unequal-decay}.
+
+\paragraph{Necessary measurements.}
+Separately measure the degree-4 Walsh vectors
+\begin{equation}
+q_4^{(1)}=\widehat{h_1}(\{1,2,3,4\}),
+\qquad
+\Delta q_4^{(2)}=\widehat{\sigma(V_2h_1)}(\{1,2,3,4\}),
+\end{equation}
+their readout contributions, and their alignment
+\begin{equation}
+\rho=\frac{q_4^{(1)}\cdot\Delta q_4^{(2)}}
+{\|q_4^{(1)}\|\,\|\Delta q_4^{(2)}\|}.
+\end{equation}
+Classifying only block-2 preactivations cannot distinguish a pure compositional circuit from
+the predicted \(D_1+C\) hybrid.  Record target-specific parameter norms as well, so that the
+cost \(A/\eta_{\rm eff}\) can be checked directly.
+
+\paragraph{Four decisive ablations.}
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Allowed routes & Main prediction & Purpose\\
+\midrule
+\(D_2,C\) & gate boundary \(1/\sqrt8\) & reproduce frozen baseline\\
+\(D_1,D_2\) & \(\eta_D=\eta_{\parallel}(\eone,\etwo;\rho_D)\) & test pooling/alignment\\
+\(D_1,C\) & hybrid fraction Eq.~\eqref{eq:hybrid-fraction} & test shared-readout synergy\\
+\(D_1,D_2,C\) & block-2 boundary Eq.~\eqref{eq:full-boundary} & test full theory\\
+\bottomrule
+\end{tabular}
+\end{center}
+The restricted \(1/2\) boundary should be tested by an ablation that really excludes \(D_1\)
+from the compositional family; otherwise the unrestricted hybrid theory predicts the block-2
+transition at \(1/\sqrt8\), not \(1/2\).
+
+Only after these fixed-order-parameter tests should the parent stiffness be relaxed.  Add a
+quadratic penalty or auxiliary loss that softly pins \(Q_2\), sweep its stiffness, and fit the
+effective potential \(\Phi\) in Eq.~\eqref{eq:landau}.  Fully simultaneous \(d2+d4\) training
+is the zero-stiffness endpoint.  This sequence separates three effects that are otherwise
+confounded: extra circuit topology, representation adaptation, and training-time lock-in.
+
+\section{Main conclusions}
+
+\begin{enumerate}
+    \item A restricted pure-composition versus pooled-direct calculation has the new aligned,
+    equal-singleton boundary \(Q_2/Q_1=1/2\), with the general form
+    Eq.~\eqref{eq:restricted-boundary}.
+
+    \item In the unrestricted architecture, block-1 direct signal can cooperate with either
+    block-2 gate.  The correct competition is \(D_1+C\) versus \(D_1+D_2\),
+    Eq.~\eqref{eq:full-boundary}.  With comparable alignment, the block-2 gate boundary remains
+    \(Q_2/Q_1^{(1)}=1/\sqrt8\).
+
+    \item The compositional side is generically a hybrid, not a pure phase.  For aligned
+    routes, its compositional target share is given by Eq.~\eqref{eq:hybrid-fraction}.  Forcing
+    a nearly pure \(2+2\to4\) circuit requires suppressing the block-1 target shortcut, applying
+    stronger decay to new block-1 target directions, or making \(Q_2/Q_1^{(0)}\) sufficiently
+    large.
+
+    \item Joint training can still be treated statically by minimizing an effective free energy
+    over \(Q_1^{(0)},Q_1^{(1)},Q_2\) and target amplitude.  This stationary order-parameter
+    theory is the natural zero-temperature limit of a later Boltzmann/field-theory treatment.
+\end{enumerate}
+
+\end{document}

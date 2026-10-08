@@ -43,6 +43,8 @@ def input_keys(x: torch.Tensor) -> torch.Tensor:
 
 
 def exclusion_keys(x: torch.Tensor) -> torch.Tensor:
+    if x.shape[1] > 62:
+        return torch.empty(0, device=x.device, dtype=torch.long)
     return torch.unique(input_keys(x), sorted=True)
 
 
@@ -182,7 +184,11 @@ def sample_unique_inputs(n: int, input_dim: int, device: torch.device) -> torch.
         if candidates.numel() == 0:
             continue
         take = min(remaining, candidates.numel())
-        seen = torch.unique(torch.cat([seen, candidates[:take]]), sorted=True)
+        # Pick a RANDOM subset: candidates are sorted, so taking the prefix
+        # keeps the numerically smallest keys and forces the top input bit
+        # toward -1 (observed as E[x_{d-1}] ~ -0.99 in generated test sets).
+        pick = torch.randperm(candidates.numel(), device=device)[:take]
+        seen = torch.unique(torch.cat([seen, candidates[pick]]), sorted=True)
 
     return inputs_from_keys(seen[:target_n], input_dim, device)
 
@@ -310,7 +316,10 @@ def make_dataset(
     max_degree: int | None = None,
 ) -> ParityDataset:
     _validate_task_shape(input_dim, relevant_dim)
-    x = sample_unique_inputs(n, input_dim, device).to(dtype=dtype)
+    if input_dim > 62:
+        x = sample_inputs(n, input_dim, device).to(dtype=dtype)
+    else:
+        x = sample_unique_inputs(n, input_dim, device).to(dtype=dtype)
     y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
     return ParityDataset(x=x, y=y)
 
@@ -483,8 +492,10 @@ def make_uniform_eval_dataset(
             .mul_(2)
             .sub_(1)
         )  # (n_configs, k)
-        # Repeat each relevant config eval_noise_repeats times
-        rel_bits = rel_bits.repeat_interleave(eval_noise_repeats, dim=0)  # (n, k)
+        # Tile all configs eval_noise_repeats times (interleaved in config space,
+        # not blocked), so any prefix of the dataset covers all configs roughly
+        # uniformly rather than only the low-index half.
+        rel_bits = rel_bits.repeat(eval_noise_repeats, 1)  # (n, k)
         n = rel_bits.shape[0]
         if irrel_dim > 0:
             irrel = (
@@ -496,6 +507,9 @@ def make_uniform_eval_dataset(
             x = torch.cat([rel_bits, irrel], dim=1)
         else:
             x = rel_bits
+        # Shuffle so a random subset is still representative.
+        perm = torch.randperm(n, device=device, generator=gen)
+        x = x[perm]
     else:
         # Monte Carlo fallback
         n = eval_noise_repeats * (2 ** 17)
@@ -612,6 +626,469 @@ def make_hierarchical_degree2_dataset(
     """Dataset of n samples from the degree-2-truncated hierarchical distribution."""
     x, _root = sample_hierarchical_degree2_inputs(
         n, relevant_dim, input_dim, device, dtype, rho, generator
+    )
+    y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
+    return ParityDataset(x=x, y=y)
+
+
+# ---------------------------------------------------------------------------
+# Symmetric hierarchical distributions
+# ---------------------------------------------------------------------------
+# In the existing (asymmetric) generator, the left child is always drawn with
+# P(L=+1)=(1+rho)/2 regardless of the parent value, so L carries a systematic
+# bias while R is derived.  The symmetric variants remove this asymmetry: a
+# biased sign z is sampled and then randomly assigned to one child, with the
+# other child forced to P*z.  Every node at the same tree depth is then
+# statistically equivalent.
+#
+# Symmetric split rule for a single level:
+#   z ~ Bernoulli((1+rho)/2)     E[z] = rho
+#   b ~ Bernoulli(1/2)
+#   (L, R) = (z, P*z)  if b = 0
+#           = (P*z, z)  if b = 1
+# This gives L*R = P exactly and E[P*L] = E[P*R] = rho/2.
+
+def _split_symmetric_batch(
+    nodes: torch.Tensor,
+    rho: float,
+    device: torch.device,
+    generator: torch.Generator | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply the symmetric split rule to a batch of parent nodes.
+
+    nodes : (n, m) tensor of ±1 parent values.
+    Returns (L, R) each of shape (n, m), satisfying L*R = nodes exactly.
+    E[nodes*L] = E[nodes*R] = rho/2.
+    """
+    n, m = nodes.shape
+    p = (1.0 + rho) / 2.0
+    z = torch.where(
+        torch.rand(n, m, device=device, generator=generator) < p,
+        torch.ones(n, m, device=device),
+        -torch.ones(n, m, device=device),
+    )
+    swap = torch.randint(0, 2, (n, m), device=device, generator=generator).bool()
+    L = torch.where(swap, nodes * z, z)
+    R = torch.where(swap, z, nodes * z)
+    return L, R
+
+
+def sample_hierarchical_symmetric_inputs(
+    n: int,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    rho: float,
+    generator: torch.Generator | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Full symmetric hierarchical distribution (symmetric split all the way to bits).
+
+    All nodes at the same tree depth have identical marginal statistics.
+    E[S * y_d] = (rho/2)^log2(relevant_dim/d) for every degree-d node.
+    rho=0 recovers the uniform distribution.
+
+    Returns:
+        x    : (n, input_dim) float tensor in {-1, +1}
+        root : (n,) float tensor (= product of relevant bits)
+    """
+    _check_hierarchical_args(relevant_dim, rho)
+
+    root = (
+        torch.randint(0, 2, (n,), device=device, generator=generator)
+        .float().mul_(2).sub_(1)
+    )
+    nodes = root.unsqueeze(1)
+    num_levels = (relevant_dim - 1).bit_length()  # log2(relevant_dim)
+
+    for _ in range(num_levels):
+        L, R = _split_symmetric_batch(nodes, rho, device, generator)
+        nodes = torch.stack([L, R], dim=2).reshape(n, -1)
+
+    leaves = nodes  # (n, relevant_dim)
+
+    irrel_dim = input_dim - relevant_dim
+    if irrel_dim > 0:
+        irrel = (
+            torch.randint(0, 2, (n, irrel_dim), device=device, generator=generator)
+            .float().mul_(2).sub_(1)
+        )
+        x = torch.cat([leaves, irrel], dim=1)
+    else:
+        x = leaves
+
+    return x.to(dtype=dtype), root.to(dtype=dtype)
+
+
+def make_hierarchical_symmetric_dataset(
+    n: int,
+    rho: float,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    exclude_targets: list[str] | tuple[str, ...] | None = None,
+    max_degree: int | None = None,
+    generator: torch.Generator | None = None,
+) -> ParityDataset:
+    """Dataset of n samples from the full symmetric hierarchical distribution."""
+    x, _root = sample_hierarchical_symmetric_inputs(
+        n, relevant_dim, input_dim, device, dtype, rho, generator
+    )
+    y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
+    return ParityDataset(x=x, y=y)
+
+
+def sample_hierarchical_symmetric_degree2_inputs(
+    n: int,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    rho: float,
+    generator: torch.Generator | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Degree-2-truncated symmetric hierarchical distribution.
+
+    Applies the symmetric split rule from the root down to degree-2 latent
+    variables z_1..z_{k/2}, then expands each z_i into two bits via a fresh
+    uniform random sign (no rho bias at the final level).  This ensures
+    E[S * x_j] = 0 for every individual input bit while preserving the
+    symmetric degree-2/4/8 correlations with the root.
+
+    rho=0 recovers the uniform distribution.
+
+    Returns:
+        x    : (n, input_dim) float tensor in {-1, +1}
+        root : (n,) float tensor (= product of relevant bits)
+    """
+    _check_hierarchical_args(relevant_dim, rho)
+
+    num_z = relevant_dim // 2
+
+    root = (
+        torch.randint(0, 2, (n,), device=device, generator=generator)
+        .float().mul_(2).sub_(1)
+    )
+
+    if num_z == 1:
+        z = root.unsqueeze(1)
+    else:
+        nodes = root.unsqueeze(1)
+        num_levels = (num_z - 1).bit_length()  # log2(num_z)
+        for _ in range(num_levels):
+            L, R = _split_symmetric_batch(nodes, rho, device, generator)
+            nodes = torch.stack([L, R], dim=2).reshape(n, -1)
+        z = nodes  # (n, num_z)
+
+    # Final split: uniform (no rho bias), guarantees E[S*x_j] = 0
+    r = (
+        torch.randint(0, 2, (n, num_z), device=device, generator=generator)
+        .float().mul_(2).sub_(1)
+    )
+    x_left = r
+    x_right = z * r
+    x_rel = torch.stack([x_left, x_right], dim=2).reshape(n, relevant_dim)
+
+    irrel_dim = input_dim - relevant_dim
+    if irrel_dim > 0:
+        irrel = (
+            torch.randint(0, 2, (n, irrel_dim), device=device, generator=generator)
+            .float().mul_(2).sub_(1)
+        )
+        x = torch.cat([x_rel, irrel], dim=1)
+    else:
+        x = x_rel
+
+    return x.to(dtype=dtype), root.to(dtype=dtype)
+
+
+def make_hierarchical_symmetric_degree2_dataset(
+    n: int,
+    rho: float,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    exclude_targets: list[str] | tuple[str, ...] | None = None,
+    max_degree: int | None = None,
+    generator: torch.Generator | None = None,
+) -> ParityDataset:
+    """Dataset of n samples from the degree-2-truncated symmetric hierarchical distribution."""
+    x, _root = sample_hierarchical_symmetric_degree2_inputs(
+        n, relevant_dim, input_dim, device, dtype, rho, generator
+    )
+    y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
+    return ParityDataset(x=x, y=y)
+
+
+# ---------------------------------------------------------------------------
+# Walsh single-mode distribution: p(x) = 2^{-d} (1 + rho * chi_A(x))
+# ---------------------------------------------------------------------------
+
+def check_walsh_mode_args(
+    mode_indices: list[int] | tuple[int, ...] | None,
+    input_dim: int,
+    rho: float,
+) -> tuple[int, ...]:
+    """Validate (mode_indices, rho) for walsh_single_mode; returns the mode as a tuple.
+
+    Unlike the hierarchical distributions there is no power-of-two restriction:
+    the support A may have arbitrary size. Indices are zero-based input coordinates.
+    """
+    if not (-1.0 <= rho <= 1.0):
+        raise ValueError(f"data_rho must be in [-1, 1] for walsh_single_mode, got {rho}")
+    if mode_indices is None or len(mode_indices) == 0:
+        raise ValueError(
+            "data_walsh_mode must be a nonempty list of zero-based input indices "
+            "when data_distribution is walsh_single_mode"
+        )
+    idx = list(mode_indices)
+    if any(isinstance(i, bool) or not isinstance(i, int) for i in idx):
+        raise ValueError(f"data_walsh_mode must contain integer indices, got {mode_indices}")
+    if len(set(idx)) != len(idx):
+        raise ValueError(f"data_walsh_mode contains duplicate indices: {mode_indices}")
+    if any(i < 0 or i >= input_dim for i in idx):
+        raise ValueError(
+            f"data_walsh_mode indices must be in [0, {input_dim}), got {mode_indices}"
+        )
+    return tuple(idx)
+
+
+def sample_walsh_single_mode_inputs(
+    n: int,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    rho: float,
+    generator: torch.Generator | None = None,
+    *,
+    mode_indices: list[int] | tuple[int, ...],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sample n inputs exactly from p(x) = 2^{-d} (1 + rho * chi_A(x)).
+
+    chi_A(x) = prod_{i in A} x_i, with A = mode_indices (zero-based input
+    coordinates, arbitrary size >= 1). relevant_dim is unused; it is kept in the
+    signature so the sampler is call-compatible with the hierarchical samplers.
+
+    Sampler: draw all bits IID uniform, draw z = ±1 with P(z=+1) = (1+rho)/2,
+    then overwrite the pivot bit (last index of A) as z * prod_{A \\ pivot} x_i,
+    which forces chi_A(x) = z since x_i^2 = 1. For a singleton A the empty
+    product is 1 and the pivot bit is simply z, so E[x_pivot] = rho.
+
+    Exactness: each parity class {x : chi_A(x) = ±1} contains 2^{d-1}
+    configurations, and the sampler is uniform within a class (the d-1 non-pivot
+    bits are IID uniform and determine the pivot together with z). Hence
+        P(x) = P(z = chi_A(x)) / 2^{d-1}
+             = (1 + rho*chi_A(x))/2 / 2^{d-1}
+             = 2^{-d} (1 + rho * chi_A(x)).
+    The density ratio w(x) = 1 + rho*chi_A(x) has Walsh coefficients only at the
+    empty set (1) and at A (rho): E[chi_A] = rho and E[chi_B] = 0 for every other
+    nonempty B. rho=0 is exactly the uniform distribution; rho=±1 forces
+    chi_A(x) = ±1 on every sample.
+
+    Returns:
+        x : (n, input_dim) float tensor in {-1, +1}
+        z : (n,) float tensor, the sampled mode parity chi_A(x)
+    """
+    mode = check_walsh_mode_args(mode_indices, input_dim, rho)
+
+    x = (
+        torch.randint(0, 2, (n, input_dim), device=device, generator=generator)
+        .float()
+        .mul_(2)
+        .sub_(1)
+    )
+    z = _impose_walsh_mode_(x, mode, rho, device, generator)
+    return x.to(dtype=dtype), z.to(dtype=dtype)
+
+
+def _impose_walsh_mode_(
+    x: torch.Tensor,
+    mode: tuple[int, ...],
+    rho: float,
+    device: torch.device,
+    generator: torch.Generator | None,
+) -> torch.Tensor:
+    """In place, on every row of an IID-uniform ±1 batch x: draw z = ±1 with
+    P(z=+1) = (1+rho)/2 and overwrite the pivot bit (last index of mode) as
+    z * prod_{mode \\ pivot} x_i, which forces chi_mode(x) = z. Afterwards the
+    rows are distributed exactly as 2^{-d} (1 + rho * chi_mode(x)); see
+    sample_walsh_single_mode_inputs for the argument. Returns z."""
+    n = x.shape[0]
+    p_plus = (1.0 + rho) / 2.0
+    u = torch.rand(n, device=device, generator=generator)
+    z = torch.where(
+        u < p_plus,
+        torch.ones(n, device=device),
+        -torch.ones(n, device=device),
+    )
+
+    pivot = mode[-1]
+    free = mode[:-1]
+    if free:
+        free_idx = torch.tensor(free, device=device, dtype=torch.long)
+        other_product = x[:, free_idx].prod(dim=1)
+    else:
+        other_product = torch.ones(n, device=device)
+    x[:, pivot] = z * other_product
+    return z
+
+
+def make_walsh_single_mode_dataset(
+    n: int,
+    rho: float,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    exclude_targets: list[str] | tuple[str, ...] | None = None,
+    max_degree: int | None = None,
+    generator: torch.Generator | None = None,
+    *,
+    mode_indices: list[int] | tuple[int, ...],
+) -> ParityDataset:
+    """Dataset of n samples from p(x) = 2^{-d} (1 + rho * chi_{mode_indices}(x)).
+
+    Targets are the usual tree parities; the data mode A is independent of them.
+    """
+    x, _z = sample_walsh_single_mode_inputs(
+        n, relevant_dim, input_dim, device, dtype, rho, generator,
+        mode_indices=mode_indices,
+    )
+    y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
+    return ParityDataset(x=x, y=y)
+
+
+# ---------------------------------------------------------------------------
+# Walsh clusters: latent mixture of single-Walsh-mode distributions
+#
+#   p(x) = sum_j alpha_j * 2^{-d} (1 + rho_j * chi_{A_j}(x))
+#        = 2^{-d} [ 1 + sum_j alpha_j * rho_j * chi_{A_j}(x) ]
+#
+# Each sample picks one latent cluster j ~ Categorical(alpha) and is drawn from
+# that cluster's single-mode distribution, so each cluster contributes exactly
+# one Walsh mode to the global density with effective coefficient
+# c_j = alpha_j * rho_j (duplicate supports add). Being a convex mixture of
+# valid distributions, the marginal is automatically a valid distribution —
+# no pointwise positivity check on 1 + sum_j c_j chi_{A_j} is needed. The
+# cluster identity is latent: it is returned for diagnostics/tests only and
+# must never be exposed to the model.
+# ---------------------------------------------------------------------------
+
+def check_walsh_clusters_args(
+    clusters: list[dict] | None,
+    input_dim: int,
+) -> list[tuple[tuple[int, ...], float, float]]:
+    """Validate a data_walsh_clusters list; returns [(mode, rho, alpha), ...].
+
+    Each cluster must be a mapping with exactly the keys {mode, rho, weight}.
+    Modes are canonicalized (sorted), may have arbitrary size >= 1, may overlap
+    across clusters, and duplicates are allowed (their coefficients add).
+    Weights are arbitrary nonnegative relative weights, normalized internally to
+    alpha_j = w_j / sum_k w_k; at least one weight must be positive. A cluster
+    with weight 0 is kept but never sampled.
+    """
+    if clusters is None or len(clusters) == 0:
+        raise ValueError(
+            "data_walsh_clusters must be a nonempty list of {mode, rho, weight} "
+            "entries when data_distribution is walsh_clusters"
+        )
+    parsed: list[tuple[tuple[int, ...], float, float]] = []
+    weights: list[float] = []
+    for j, cluster in enumerate(clusters):
+        if not isinstance(cluster, dict):
+            raise ValueError(f"cluster {j} must be a mapping, got {type(cluster).__name__}")
+        extra = set(cluster) - {"mode", "rho", "weight"}
+        missing = {"mode", "rho", "weight"} - set(cluster)
+        if missing:
+            raise ValueError(f"cluster {j} is missing keys {sorted(missing)}")
+        if extra:
+            raise ValueError(f"cluster {j} has unknown keys {sorted(extra)}")
+        rho = float(cluster["rho"])
+        # Reuses the single-mode validation (mode shape + rho in [-1, 1]).
+        mode = tuple(sorted(check_walsh_mode_args(cluster["mode"], input_dim, rho)))
+        weight = float(cluster["weight"])
+        if weight < 0:
+            raise ValueError(f"cluster {j} weight must be >= 0, got {weight}")
+        parsed.append((mode, rho, weight))
+        weights.append(weight)
+    total = sum(weights)
+    if total <= 0:
+        raise ValueError("at least one cluster must have positive weight")
+    return [(mode, rho, w / total) for (mode, rho, w) in parsed]
+
+
+def sample_walsh_clusters_inputs(
+    n: int,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    rho: float = 0.0,
+    generator: torch.Generator | None = None,
+    *,
+    clusters: list[dict],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sample n inputs from the mixture of single-Walsh-mode clusters.
+
+    The positional rho is IGNORED (kept only for call-compatibility with the
+    other samplers): the authoritative biases are the per-cluster rho values.
+
+    Procedure: J_n ~ Categorical(alpha) per sample; all bits IID uniform ±1;
+    for each cluster, its rows get that cluster's single-mode parity constraint
+    imposed via the shared pivot construction (_impose_walsh_mode_). Since
+    cluster j is selected with probability alpha_j and contributes
+    p_j(x) = 2^{-d}(1 + rho_j chi_{A_j}(x)), the marginal is exactly
+    2^{-d}[1 + sum_j alpha_j rho_j chi_{A_j}(x)].
+
+    Returns:
+        x           : (n, input_dim) float tensor in {-1, +1}
+        cluster_ids : (n,) long tensor, the latent cluster of each sample —
+                      for diagnostics/tests only, never for the model.
+    """
+    validated = check_walsh_clusters_args(clusters, input_dim)
+
+    probs = torch.tensor([alpha for _, _, alpha in validated], device=device)
+    cluster_ids = torch.multinomial(probs, n, replacement=True, generator=generator)
+
+    x = (
+        torch.randint(0, 2, (n, input_dim), device=device, generator=generator)
+        .float()
+        .mul_(2)
+        .sub_(1)
+    )
+    for j, (mode, rho_j, _alpha) in enumerate(validated):
+        rows = cluster_ids == j
+        if not bool(rows.any()):
+            continue
+        x_rows = x[rows]
+        _impose_walsh_mode_(x_rows, mode, rho_j, device, generator)
+        x[rows] = x_rows
+
+    return x.to(dtype=dtype), cluster_ids
+
+
+def make_walsh_clusters_dataset(
+    n: int,
+    rho: float,
+    relevant_dim: int,
+    input_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    exclude_targets: list[str] | tuple[str, ...] | None = None,
+    max_degree: int | None = None,
+    generator: torch.Generator | None = None,
+    *,
+    clusters: list[dict],
+) -> ParityDataset:
+    """Dataset of n samples from the walsh_clusters mixture (rho arg ignored).
+
+    Only (x, y) are stored: the latent cluster ids never reach the model.
+    """
+    x, _ids = sample_walsh_clusters_inputs(
+        n, relevant_dim, input_dim, device, dtype, rho, generator, clusters=clusters
     )
     y = labels_from_inputs(x, relevant_dim, exclude_targets, max_degree).to(dtype=dtype)
     return ParityDataset(x=x, y=y)

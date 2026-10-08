@@ -1,0 +1,154 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1.55cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{2pt}
+\setlength{\parindent}{0pt}
+\graphicspath{{../analysis_output/accessibility_alpha_d4adapter_wd/}}
+
+\title{\vspace{-1.35cm}Matched regularization of first- and second-block $d4$ routes\\
+\large The adapter control restores an accessibility-selected compositional regime}
+\author{}
+\date{\vspace{-1.15cm}}
+
+\begin{document}
+\maketitle
+\vspace{-1.8cm}
+
+\section*{Design and validation}
+This experiment protects the pretrained $d2$ parents while exposing newly learned $d4$
+routes in both blocks to the same regularization.  After parent pretraining, $E$ and the
+rescaled base $V_1$ are frozen.  A small parallel trainable adapter $V'_1$ is added, and
+phase 2 applies the same coefficient $\lambda$ to $V'_1$, $V_2$, and the $d4$ readout row
+$W_4$.  The two $d2$ losses remain active.  As in the earlier accessibility sweeps,
+$V_1\mapsto\alpha V_1$ controls the measured onset ratio $R_0=Q_2/Q_1$; the adapter starts
+at $10^{-3}$ of standard initialization and negligibly perturbs $R_0$.
+
+The completed grid contains eight $\alpha$ values, eight decay values, and three pretrained
+seeds.  All $192$ result cells and all $192$ trajectory cells are present.  Unless stated
+otherwise, numbers and phase colors below are three-seed means.  The red line marks the
+theoretical frozen-feature threshold $R_c=1/\sqrt{8}=0.354$.
+
+\section*{Main result: a compositional phase returns, but not exactly at $R_c$}
+Matched adapter decay produces a clear blue-to-red boundary that was absent from the
+matched-$V_2/W_4$ control.  At $\lambda=10^{-2}$, the mean block-2 $2{+}2$ fraction rises
+from $0.010\pm0.004$ at $R_0=0.323$ to $0.340\pm0.119$ at $R_0=0.416$, then to
+$0.880\pm0.015$ at $R_0=0.515$ and $0.899\pm0.019$ at $R_0=0.573$.  The same structure is
+already visible at $\lambda=3\cdot10^{-3}$ ($0.028$, $0.318$, $0.848$, $0.888$ at those
+four $R_0$ values).  Thus the theoretical threshold correctly identifies the side on which
+composition becomes possible, but the empirical transition is broad and displaced toward
+larger accessibility.  Its seed sensitivity is localized near the boundary: the largest
+standard deviation is $0.119$ at $(\alpha,\lambda)=(1.5,10^{-2})$, whereas the high-$R_0$
+phase has standard deviation at most $0.020$ for $\lambda\geq3\cdot10^{-3}$.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.99\textwidth]{adapter_phase_diagrams.pdf}
+\vspace{-5pt}
+\caption{Mean block-2 $2{+}2$ fraction indexed by initial (left) and final (right)
+accessibility.  Crosses mark cells with mean $d4$ coefficient below $0.9$, which occurs
+mainly at the strongest decay and should not be read as a clean circuit-selection result.}
+\label{fig:phase}
+\end{figure}
+
+\clearpage
+\section*{Comparison with the earlier controls}
+The adapter intervention reverses the failure of the fully trainable controls.  At
+$R_0=0.416,\lambda=10^{-2}$, the $2{+}2$ fraction is $0.340$ with the adapter, versus
+$0.159$ under $V_2$-only decay and $0.0007$ under matched $V_2/W_4$ decay.  At
+$R_0=0.515$ the comparison is $0.880$ versus $0.230$ and $0.0002$.  The frozen-parent
+benchmark remains sharper: at nearby $R=0.438$ and $0.499$, it reaches $0.904$ and
+$0.975$.  The adapter therefore recovers most of the frozen compositional solution at high
+accessibility, while the onset cell remains mixed and variable.
+
+This result identifies the missing condition in the earlier experiments.  Matching the
+$V_2$ and readout penalties alone closes a scale escape but leaves the base representation
+free to reorganize and bypass parent composition.  Freezing the pretrained parent-producing
+map prevents that reorganization.  Under this constraint, matched regularization again
+makes initial accessibility predictive of the block-2 circuit.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.99\textwidth]{adapter_cuts_comparison_routes.pdf}
+\vspace{-5pt}
+\caption{Left: fixed-$\lambda$ cuts through the adapter phase diagram.  Center: direct
+comparison at $\lambda=10^{-2}$.  Right: signed $d4$ readout contributions from the frozen
+base, trainable adapter, and block 2; the dashed line is the internal block-2 $2{+}2$
+fraction.  Error bars are one standard deviation across seeds.}
+\label{fig:routes}
+\end{figure}
+
+\section*{Route competition: block 2 composes, while block 1 remains direct}
+The adapter's classified computation is $1{+}1{+}1{+}1$ in every cell
+($f^{\rm adapter}_{2+2}<1.3\cdot10^{-33}$).  It is therefore the intended direct
+first-block competitor, not another route to parent composition.  At $\lambda=10^{-2}$
+and $R_0=0.416$, the mean signed contributions to $\hat f_4=0.986$ are $0.213$ from the
+frozen base, $0.248$ from the adapter, and $0.526$ from block 2.  At $R_0=0.515$ they are
+$0.252$, $0.103$, and $0.635$; at $R_0=0.573$, $0.336$, $0.042$, and $0.616$.
+
+Thus increasing accessibility suppresses the penalized direct adapter and selects a
+majority block-2 route whose internal computation is $88$--$90\%$ compositional.  It does
+\emph{not} produce a pure end-to-end compositional phase: the unpenalized frozen base still
+carries $25$--$34\%$ of $d4$ in the high-$R_0$ cells.  This fixed residual shortcut is now
+the main obstruction, rather than a trainable first block learning around the penalty.
+
+\clearpage
+\section*{Accessibility drift and norm balance}
+$R(t)$ changes much less than in the earlier fully trainable sweeps.  At
+$\lambda=10^{-2}$, $R_0=0.323,0.416,0.515,0.573$ end at
+$R_{\rm final}=0.341,0.429,0.534,0.578$.  Very low-$R_0$ cells rise more
+($0.039\to0.167$), but no trajectory crosses from the clearly subcritical group into the
+high-composition phase.  The circuit change is consequently associated with the controlled
+initial representation rather than a common late-time attractor in $R$.
+
+The matched penalty also avoids the catastrophic scale imbalance of $V_2$-only decay.  At
+$\lambda=10^{-2}$, the norms $(V'_1,V_2,W_4)$ are $(1.041,1.200,1.643)$ for
+$R_0=0.416$, $(0.543,1.124,1.404)$ for $R_0=0.515$, and $(0.266,0.901,1.145)$ for
+$R_0=0.573$.  In particular,
+$\lVert W_4\rVert/\lVert V_2\rVert=1.25$--$1.37$ in the transition and compositional
+regime, compared with $3.22$ at $R_0=0.416$ in the matched-$V_2/W_4$ experiment and an
+essentially collapsed $V_2$ under $V_2$-only decay.  The frozen benchmark is more nearly
+balanced still (ratio about $1.08$ at nearby $R$), but the adapter control eliminates the
+qualitative scale escape.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.86\textwidth]{adapter_drift_norms.pdf}
+\vspace{-5pt}
+\caption{Left: $R_{\rm final}$ versus $R_0$.  Right: the three matched-route norms at
+$\lambda=10^{-2}$.  The direct adapter norm falls sharply as the compositional block-2
+route becomes accessible.}
+\label{fig:drift}
+\end{figure}
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.96\textwidth]{adapter_phase_plane.pdf}
+\vspace{-5pt}
+\caption{Mean trajectories over the three seeds.  Above the accessibility boundary,
+block-2 composition grows rapidly without a large accompanying drift in $R(t)$; below it,
+the trajectories remain direct.}
+\label{fig:trajectories}
+\end{figure}
+
+\textbf{Conclusion.}
+Freezing the pretrained $d2$ parents and taxing the new direct and compositional routes on
+equal footing restores the qualitative accessibility transition predicted by the frozen
+theory.  The transition is not pinned sharply to $1/\sqrt8$: it occupies the interval
+$R_0\simeq0.42$--$0.52$ and is most variable at its lower edge.  High accessibility selects
+a robust, majority block-2 route with nearly pure $2{+}2$ internal structure.  A pure
+network-level compositional phase is still prevented by the frozen first-block $d4$
+shortcut, whose readout contribution remains substantial precisely where the adapter route
+has been regularized away.
+
+\vspace{2pt}
+\footnotesize
+Artifacts are stored in the d4-adapter analysis directory: merged results and trajectories,
+phase diagrams, cuts, protocol comparison, route decomposition, drift, norm balance, and
+phase-plane trajectories.  Training used
+\texttt{analysis/accessibility/}\allowbreak
+\texttt{run\_alpha\_unfrozen\_experiment.py} with \texttt{--wd-d4-adapter}.
+
+\end{document}

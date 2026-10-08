@@ -57,6 +57,12 @@ def run(run_dir: Path) -> None:
         ax.semilogy(step, df["test_mse"], label="test")
     if "train_set_mse" in df.columns:
         ax.semilogy(step, df["train_set_mse"], label="train (pool)", linestyle="--")
+    # Non-uniform runs log both eval sets: uniform (exhaustive) and the training
+    # distribution. Plotting both makes the shortcut-vs-true-parity gap visible.
+    if "eval_uniform_mse" in df.columns:
+        ax.semilogy(step, df["eval_uniform_mse"], label="eval uniform", linestyle=":")
+    if "eval_nonuniform_mse" in df.columns:
+        ax.semilogy(step, df["eval_nonuniform_mse"], label="eval nonuniform (train dist)", linestyle=":")
     ax.set_xlabel("step")
     ax.set_ylabel("MSE")
     ax.set_title(f"Total MSE  –  {run_dir.name}")

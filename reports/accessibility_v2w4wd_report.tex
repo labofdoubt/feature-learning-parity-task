@@ -1,0 +1,130 @@
+\documentclass[10pt]{article}
+\usepackage[margin=1.55cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parskip}{2pt}
+\setlength{\parindent}{0pt}
+\graphicspath{{../analysis_output/accessibility_alpha_v2w4wd/}}
+
+\title{\vspace{-1.4cm}Matched $V_2$ and $d4$-readout decay closes the scale escape\\
+but erases the compositional circuit\\
+\large 8 $\alpha$ $\times$ 8 $\lambda$ $\times$ 3 seeds = 192 cells}
+\author{}
+\date{\vspace{-1.2cm}}
+
+\begin{document}
+\maketitle
+\vspace{-1.9cm}
+
+\section*{Design}
+This control is identical to the V2-only-decay experiment except that the same phase-2
+coefficient $\lambda$ penalizes both $V_2$ and the $d4$ readout row $W[2]$.  The embedding,
+$V_1$, and the two $d2$ readout rows remain decay-free; all parameters remain trainable and
+the two $d2$ losses remain active.  The initial accessibility is set by
+$V_1\mapsto\alpha V_1$ and measured as $R_0=Q_2/Q_1$.  The grid uses eight $\alpha$ values,
+eight $\lambda$ values from 0 to $10^{-1}$, and three pretrained seeds.  All 192 cells
+completed, retained $d4$ accuracy, and are represented in the trajectory files.
+
+\section*{Findings}
+\textbf{1. Readout decay does not sharpen the transition at
+$R_c=1/\sqrt8$.}
+Very weak decay gives a small increase in composition, but the effect reverses before a
+phase develops.  At $R_0=0.417$, the mean $2{+}2$ fraction is
+$0.101\;(\lambda=0)\to0.124\;(3{\cdot}10^{-4})$, then falls to
+$0.015\;(10^{-3})$ and $0.0028\;(3{\cdot}10^{-3})$.  At $R_0=0.515$ the corresponding
+sequence is $0.103\to0.128\to0.024\to0.0021$.  Pooling all supercritical cells gives
+$f_{2+2}=0.112$ at $3{\cdot}10^{-4}$, $0.020$ at $10^{-3}$, and $0.0021$ at
+$3{\cdot}10^{-3}$.  The phase diagrams therefore become uniformly blue as $\lambda$ grows;
+there is no decay-sharpened boundary.
+
+\textbf{2. The contrast with both benchmarks is large.}
+At $R_0=0.417,\lambda=3{\cdot}10^{-3}$, matched readout decay gives
+$f_{2+2}=0.0028$, compared with $0.185$ under V2-only decay.  At $\lambda=10^{-2}$ the
+comparison is $0.0007$ versus $0.159$.  The frozen benchmark is more strongly
+compositional still: around matched $R\simeq0.436$, it gives $f_{2+2}=0.84$--$0.89$ at
+$3{\cdot}10^{-3}$ and $0.87$--$0.92$ at $10^{-2}$.  Readout decay thus does not complete
+the V2-only experiment's partial transition; it removes it.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.49\textwidth]{phase_R0.pdf}\hfill
+\includegraphics[width=0.49\textwidth]{phase_Rfinal.pdf}
+\vspace{-4pt}
+\caption{Mean compositional fraction versus $R_0$ (left) and $R_{\rm final}$ (right).
+The red line marks $R_c$.  Weak decay preserves a faint accessibility dependence, but
+$\lambda\geq10^{-3}$ suppresses composition on both sides of the theoretical boundary.}
+\label{fig:phase}
+\end{figure}
+
+\textbf{3. $R(t)$ remains high while composition disappears.}
+Decay raises $R_{\rm final}$ relative to the no-decay trajectory and compresses the sweep
+toward a supercritical band.  For example, $R_0=0.323$ ends at $R_{\rm final}=0.311$ with
+no decay but at $0.407$ for $\lambda=10^{-2}$; $R_0=0.515$ ends at $0.412$ and $0.443$,
+respectively.  High-$R_0$ conditions can drift downward in absolute terms, while low-$R_0$
+conditions drift upward.  The important observation is the decoupling: at
+$\lambda=10^{-2}$ the representation is mostly above $R_c$, yet the compositional fraction
+is only $4{\cdot}10^{-4}$ in the initially supercritical group.
+
+\clearpage
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.49\textwidth]{cuts_fixed_lambda.pdf}\hfill
+\includegraphics[width=0.49\textwidth]{drift.pdf}
+\vspace{-4pt}
+\caption{Left: fixed-$\lambda$ cuts show the small weak-decay separation and its collapse
+at larger $\lambda$.  Right: $R_{\rm final}$ versus $R_0$; decay funnels the representation
+toward $R\approx0.4$--$0.45$ rather than restoring a compositional phase.}
+\label{fig:drift}
+\end{figure}
+
+\textbf{4. The V2-only scaling escape is fixed, but balanced norms do not emerge.}
+In the V2-only experiment, $V_2$ could vanish while the unpenalized readout stayed large:
+at $R_0=0.417,\lambda=10^{-2}$, $\|V_2\|=4.7{\cdot}10^{-4}$ while the total readout norm
+was $2.83$.  With matched decay, both relevant norms shrink: at the same $R_0$,
+$(\|V_2\|,\|W_4\|)=(0.420,0.734)$ at $10^{-3}$,
+$(0.116,0.372)$ at $10^{-2}$, and $(0.067,0.276)$ at $3{\cdot}10^{-2}$.  However, the
+ratio $\|W_4\|/\|V_2\|$ grows from $1.75$ to $3.22$ to $4.11$ rather than approaching the
+near-balanced frozen solution (roughly $1.8$ versus $1.9$ around the same $R$).  Matched
+parameter decay therefore removes the literal rescaling loophole but does not select the
+frozen compositional optimum in the full network.
+
+\textbf{5. The first-block residual shortcut still blocks a pure compositional phase.}
+For $\lambda\leq3{\cdot}10^{-2}$, $|\hat f_4|$ remains at least $0.998$ even where $V_2$
+is tiny and $f_{2+2}$ is nearly zero.  Hundreds of block-2 neurons remain classified as
+relevant, but their computation is not parent-compositional.  Because the unpenalized,
+trainable first block feeds the readout through the residual stream, the most consistent
+interpretation is that its learned $d4$ leak carries the target while decay dismantles the
+two-parent block-2 route.  This is an inference from the present observables rather than a
+direct route decomposition; the parallel-$d4$-adapter experiment records first- and
+second-block contributions explicitly.
+
+\clearpage
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.98\textwidth]{phase_plane.pdf}
+\vspace{-4pt}
+\caption{Seed-0 trajectories in $(R(t),f_{2+2}(t))$.  Under appreciable matched decay,
+trajectories move toward or remain in the supercritical-$R$ region while falling toward
+zero composition.  Accessibility alone no longer predicts which circuit carries $d4$.}
+\label{fig:plane}
+\end{figure}
+
+\textbf{Bottom line.}
+Readout decay answers the scale-balance objection to V2-only decay, but the result is not a
+sharper transition.  Instead, it reveals a stronger bypass: the full network keeps $d4$
+solved, maintains or increases measured accessibility, and abandons the $2{+}2$ circuit.
+The frozen benchmark's clean transition requires not only matched regularization but also
+protection from alternative trainable routes.  Directly regularizing a new block-1 $d4$
+adapter alongside $V_2$ and $W_4$, while freezing the pretrained $d2$ parents, is therefore
+the appropriate next comparison.
+
+\vspace{2pt}
+\footnotesize
+Artifacts: \texttt{analysis\_output/accessibility\_alpha\_v2w4wd/}
+(merged results, trajectories, phase diagrams, cuts, drift, and phase-plane plot).  Code:
+\texttt{analysis/accessibility/run\_alpha\_unfrozen\_experiment.py}
+(\texttt{--wd-block2-readout}) and \texttt{scripts/launch\_v2w4wd\_workers.sh}.
+
+\end{document}

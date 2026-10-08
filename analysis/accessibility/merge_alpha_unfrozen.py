@@ -46,7 +46,7 @@ for xcol, fname, xlabel in (("R0", "phase_R0", "$R_0$ (measured, at d4 onset)"),
     ax.axvline(RC, color="r", ls="--", lw=1.2, label=r"$R_c=1/\sqrt{8}$")
     ax.set_yscale("log")
     ax.set_xlabel(xlabel)
-    ax.set_ylabel(r"global weight decay $\lambda$  (bottom row = 0)")
+    ax.set_ylabel(r"phase-2 weight decay $\lambda$  (bottom row = 0)")
     ax.set_title(f"{A.title}: mean 2+2 fraction", fontsize=10)
     fig.colorbar(sc, label="fraction of 2+2→4 computation")
     ax.legend(fontsize=8, loc="upper left")

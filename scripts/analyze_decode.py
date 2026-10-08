@@ -292,6 +292,7 @@ def run(
     num_samples: int | None,
     batch_size: int,
     max_partitions: int,
+    label: str = "",
 ) -> None:
     device = resolve_device("cuda" if torch.cuda.is_available() else "cpu")
     ckpt_path = run_dir / "checkpoints" / "final.pt"
@@ -301,13 +302,24 @@ def run(
     dtype = resolve_dtype(training["dtype"])
     model = model.to(device=device, dtype=dtype).eval()
 
-    if indices is None:
+    task_type = config.get("task", {}).get("task_type", "tree_parity")
+    if task_type == "reuse_star" and indices is None:
+        # Analyse S1 only: product of bits 0..15 (the contiguous 16-bit target)
+        indices = list(range(16))
+        print("reuse_star task detected — analysing S1 (bits 0–15, degree 16)")
+    elif indices is None:
         indices = list(range(degree))
 
-    test_data = load_dataset(run_dir / "test_data.pt", device, dtype)
+    _data_path = run_dir / "eval_uniform.pt"
+    if not _data_path.exists():
+        _data_path = run_dir / "test_data.pt"
+        print(f"eval_uniform.pt not found, falling back to test_data.pt")
+    print(f"Loading data from: {_data_path.name}")
+    test_data = load_dataset(_data_path, device, dtype)
     x = test_data.x
     if num_samples is not None and num_samples < x.shape[0]:
-        x = x[:num_samples]
+        perm = torch.randperm(x.shape[0], generator=torch.Generator().manual_seed(42))
+        x = x[perm[:num_samples]]
 
     if degree <= 4:
         partitions = all_set_partitions(indices)
@@ -321,18 +333,20 @@ def run(
     analysis_dir.mkdir(exist_ok=True)
     plots_dir.mkdir(exist_ok=True)
 
+    suffix = f"_{label}" if label else ""
+
     n_blocks = len(model.blocks)
     block_results: list[tuple[pd.DataFrame, float]] = []
 
     for block_idx in range(n_blocks):
         print(f"\n  Block {block_idx} / {n_blocks - 1} …")
         df, orig_norm = decode_block(model, x, block_idx, indices, partitions, batch_size)
-        csv_path = analysis_dir / f"decode_d{degree}_block{block_idx}.csv"
+        csv_path = analysis_dir / f"decode_d{degree}{suffix}_block{block_idx}.csv"
         df.to_csv(csv_path, index=False)
         print(f"    norm_original = {orig_norm:.5f}  |  top cosine = {df['cosine'].iloc[0]:.4f}")
         block_results.append((df, orig_norm))
 
-    plot_path = plots_dir / f"decode_d{degree}_blocks.png"
+    plot_path = plots_dir / f"decode_d{degree}{suffix}_blocks.png"
     render_table_figure(block_results, degree, run_dir.name, plot_path)
 
 
@@ -346,6 +360,8 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--max-partitions", type=int, default=1000,
                         help="Max partitions for tree family (d8/d16)")
+    parser.add_argument("--label", type=str, default="",
+                        help="Optional suffix appended to output filenames (e.g. 's2')")
     args = parser.parse_args()
     run(
         Path(args.run_dir),
@@ -354,6 +370,7 @@ def main() -> None:
         args.num_samples,
         args.batch_size,
         args.max_partitions,
+        args.label,
     )
 
 

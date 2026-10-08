@@ -1,0 +1,130 @@
+\documentclass[10pt]{article}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+\setlength{\parskip}{4pt}\setlength{\parindent}{0pt}
+
+\title{\vspace{-1.2cm}Neuron mechanisms: how $d4$-dominant neurons compute degree-4 parity\\
+\large \texttt{wd3\_k0\_N2048}, step 500k --- post-nonlinearity units, uniform evaluation data}
+\author{}\date{September 2026}
+
+\begin{document}\maketitle\vspace{-1.4cm}
+
+\section*{Setup}
+For each neuron we analyze the post-nonlinearity activation $a=\phi(z)$, with
+$\phi=\mathrm{relu}(\tanh)$ and $z=(Vh)_n$, measured immediately after the
+nonlinearity and before the residual addition. We call a neuron \emph{$d4$-dominant}
+when, among the 15 binary-tree target modes, its largest Walsh coefficient is a
+four-bit parity $\chi_{abcd}$ (with $q=(x_a,x_b,x_c,x_d)$ denoting the corresponding
+tree quad). There are 1022 active $d4$-dominant neurons in total: 207/229/285/307 in
+blocks 0--3, excluding dead units. All coefficients are estimated on $2^{16}$ uniform
+samples. For each neuron, both $z$ and $a$ are decomposed over the complete 16-mode
+Walsh basis of the corresponding 4-bit cube. In both cases, this 4-bit cube explains
+$>99\%$ of the variance, meaning that these neurons are, to very good approximation,
+functions only of those four input bits.
+
+\section*{Mechanism: majority gates on raw bits, not composition of pairs}
+For the exemplar neuron (block~2, neuron~1543, quad $d4\_0$), the pre-activation is
+approximately a \emph{balanced sum of four singleton modes},
+\[
+z \;\approx\; \gamma\,( x_a - x_b - x_c - x_d),\qquad \gamma=0.305,
+\]
+with the four singleton terms accounting for $99.7\%$ of $\mathrm{Var}(z)$. In other
+words, before the nonlinearity there is essentially no degree-2 or degree-4 content.
+Since $z/\gamma\in\{-4,-2,0,2,4\}$, applying $a=\phi(z)$ turns this signed linear sum
+into a \textbf{soft ``$\geq3$-of-4'' majority gate}: it fires most strongly,
+$tanh(4\gamma)=0.84$, on the single input corner that matches the learned sign pattern
+in all four coordinates, and more weakly, $\tanh(2\gamma)\approx0.56$, on the four
+corners that match it in exactly three coordinates (Fig.~\ref{fig:ex}, left).
+
+The resulting Walsh spectrum is almost completely reproduced by the
+\emph{parameter-free} idealized gate $\phi(\gamma\sum_k s_k x_k)$
+(Fig.~\ref{fig:ex}, middle): roughly $70\%$ of the variance lies in the four
+singleton modes, roughly $20\%$ is distributed \emph{equally across all six pair
+parities}, $8.8\%$ lies in the four-bit parity itself, and about $1\%$ lies in
+triple modes. Crucially, the neuron is not receiving already-formed upstream $d2$
+features as its main inputs. The network is therefore not implementing the
+four-parity as an explicit $4=2{\cdot}2$ composition at this point; instead, this
+neuron acts directly on the four raw degree-1 features.
+
+\begin{figure}[h]\centering
+\includegraphics[width=\textwidth]{fig1_exemplar_1543.pdf}
+\caption{Exemplar $d4$-dominant neuron (block 2, \#1543). Left: conditional means
+over the 16 cells of its quad --- a $\geq3$-of-4 majority gate. Middle: measured
+Walsh spectrum (bars) vs.\ the ideal gate prediction (black ticks); colors mark the
+tree-tracked modes. Right: the pre-activation is four balanced singletons.}
+\label{fig:ex}
+\end{figure}
+
+\section*{The observed coverage $\approx 1/6$, explained}
+Our tree-based analysis tracks only three modes on this four-bit cube:
+$\{\chi_{ab},\chi_{cd},\chi_{abcd}\}$. These are the two degree-2 parities that are
+actual children of the quad in the binary target tree, together with the degree-4
+quad itself. The other four pair parities are real Walsh modes of the neuron, but
+they are \emph{off-tree} and therefore do not count toward tree coverage.
+For the ideal gate, the tracked fraction is
+\[
+\mathrm{cov} \;=\; \frac{a_{ab}^2+a_{cd}^2+a_{abcd}^2}{\mathrm{Var}(a)}
+\;=\;0.151\quad(\text{exemplar }0.156,\ \text{population median }0.142),
+\]
+which matches the observed value of about $0.16$ (Fig.~\ref{fig:pop}, middle).
+Thus the apparent ``$1/6$'' coverage is not the result of the neuron's variance being
+symmetrically divided into six equal pieces. It is simply the fraction of the
+majority-gate spectrum that happens to lie on the three modes we track in the target
+tree. The remaining $\sim\!84\%$ is mostly singleton power ($\sim70\%$) plus the
+four off-tree cross-pair modes
+$\chi_{ac},\chi_{ad},\chi_{bc},\chi_{bd}$ ($\sim14\%$ in total). Each of these cross
+pairs is about as strong as either of the two tree pairs; they are excluded only
+because they are not nodes of the chosen binary tree.
+
+\section*{Population: universal gates, plus quad-amplifiers in the last block}
+This mechanism is not specific to the exemplar. Among the highest-ranked $d4$ neurons
+in blocks 0--2, \textbf{100\%} satisfy the balanced-singleton input criterion
+($\geq90\%$ of $\mathrm{Var}(z)$ in the four singleton modes, with balance
+$\geq0.7$); across all active $d4$-dominant neurons, the fraction is 72.6\%
+(Fig.~\ref{fig:pop}, left). The population contains all three possible sign-pattern
+classes, 4:0/3:1/2:2 $=145/646/376$. These correspond to majority/corner detectors
+centered on different regions of the four-bit cube rather than to one unique gate.
+
+The main exception appears in the final residual block. There are 160 neurons---155
+of them in block~3---with tree coverage close to 1. Their pre-activations are no longer
+dominated by raw singleton features. Instead, the already-formed degree-4 parity is
+itself the dominant input component: in $z$, the median variance allocation is
+$84\%$ to $\chi_{abcd}$, $14\%$ to the two tree-pair modes, and only $0.5\%$ to the
+singletons. These neurons are therefore better described as \textbf{pass-through
+amplifiers}: blocks 0--2 create degree-4 parity through majority-gate neurons, while
+their large singleton and off-tree pair components can cancel when many neurons are
+combined; block~3 then receives the cleaner population-level parity feature and
+re-amplifies it.
+
+\begin{figure}[h]\centering
+\includegraphics[width=\textwidth]{fig2_population.pdf}
+\caption{All active $d4$-dominant neurons. Left: fraction with majority-gate input
+vs.\ rank by quad power (blocks 0--2 at 1.0; block 3 lower --- see amplifiers).
+Middle: tree-tracked coverage concentrates at the ideal-gate value $0.15$
+($\approx$ the observed $1/6$), with the amplifier subpopulation at $\approx1$.
+Right: median variance allocation --- most of a $d4$ neuron is off-tree.}
+\label{fig:pop}
+\end{figure}
+
+\textbf{Takeaway.} In \texttt{wd3\_k0\_N2048}, degree-4 parity is not primarily
+computed by composing the network's existing $d2$ features. Instead, most
+$d4$-dominant neurons in blocks 0--2 implement soft majority/corner detectors directly
+on the four underlying raw bits. Such a gate naturally contains the desired degree-4
+parity, but also much larger singleton components and equal-strength degree-2
+components on all six pairs, including four pairs that are not part of the target
+binary tree. This is why the tree modes explain only about $1/6$ of the variance of a
+typical $d4$-dominant neuron. The clean degree-4 parity is therefore best viewed as a
+\emph{population-level} feature: unwanted singleton and off-tree components cancel
+across neurons, while the shared parity component survives. In the final block,
+dedicated amplifier neurons then receive this consolidated parity and carry it much
+more directly.
+
+\vfill\footnotesize
+Artifacts: \texttt{gdrive:parity/analysis\_output/neuron\_mechanisms/wd3\_k0\_N2048/step\_00500000/}
+(figures, \texttt{d4\_per\_neuron.csv}, exemplar tensors, this report; d2 corner-unit
+probe in the same folder).
+\end{document}

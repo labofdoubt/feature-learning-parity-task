@@ -12,10 +12,19 @@ convergence). R(t), circuit fractions, f4, losses, norms recorded every 500
 steps -- the drift of R from its alpha-controlled initial value is a primary
 observable.
 
+Three selective-decay controls are available. ``--wd-block2-only`` reproduces
+exp. 6 by decaying V2 alone. ``--wd-block2-readout`` decays V2 and the d4
+readout row W[2] with the same lambda, while leaving E, V1, and the two d2
+readout rows decay-free. ``--wd-d4-adapter`` freezes E and the rescaled,
+pretrained V1, adds a small independently initialized parallel block-1
+adapter V1_adapter, and applies matched decay to V1_adapter, V2, and W[2].
+This last mode taxes newly formed d4 routes in either block without decaying
+the pretrained parent-producing base.
+
 Split across machines by alpha: --alphas "0.1,0.5,1.0,2.5" --tag texas.
-Outputs results_<tag>.csv / trajectories_<tag>.csv / pretrain_<tag>.json in
-analysis_output/accessibility_alpha_unfrozen/, synced to Drive; a separate
-merge script concatenates the halves and draws the figures.
+Outputs results_<tag>.csv / trajectories_<tag>.csv / pretrain_<tag>.json in a
+mode-specific analysis_output/accessibility_alpha_*/ directory, synced to
+Drive; a separate merge script concatenates the halves and draws the figures.
 
 Fixed choices: N=1024, seeds 0-2, SGD(lr=0.01, momentum=0.9), float64,
 full 16-point cube, MIN 15k / MAX 50k steps with plateau stopping.
@@ -35,15 +44,31 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--alphas", required=True, help="comma list, e.g. 0.1,0.5,1.0,2.5")
 ap.add_argument("--tag", required=True)
 ap.add_argument("--seeds", default="0,1,2", help="comma list of seeds")
-ap.add_argument("--wd-block2-only", action="store_true",
-                help="apply phase-2 weight decay ONLY to V2 (exp 6); "
-                     "default decays all four matrices (exp 4)")
+wd = ap.add_mutually_exclusive_group()
+wd.add_argument("--wd-block2-only", action="store_true",
+                help="apply phase-2 weight decay only to V2 (exp 6)")
+wd.add_argument("--wd-block2-readout", action="store_true",
+                help="apply matched phase-2 weight decay to V2 and only the "
+                     "d4 readout row W[2]")
+wd.add_argument("--wd-d4-adapter", action="store_true",
+                help="freeze E and pretrained V1, add a parallel trainable "
+                     "block-1 adapter, and decay the adapter, V2, and W[2]")
+ap.add_argument("--adapter-init-scale", type=float, default=1e-3,
+                help="scale of the independently initialized block-1 adapter "
+                     "relative to standard initialization (default: 1e-3)")
 ARGS = ap.parse_args()
+if ARGS.wd_d4_adapter and ARGS.adapter_init_scale <= 0:
+    ap.error("--adapter-init-scale must be positive in --wd-d4-adapter mode")
 ALPHAS = [float(a) for a in ARGS.alphas.split(",")]
 
-OUT = Path("/root/parity/analysis_output/"
-           + ("accessibility_alpha_v2wd" if ARGS.wd_block2_only
-              else "accessibility_alpha_unfrozen"))
+WD_MODE = ("d4_adapter" if ARGS.wd_d4_adapter else
+           "v2_w4" if ARGS.wd_block2_readout else
+           "v2_only" if ARGS.wd_block2_only else "global")
+OUT_NAME = {"global": "accessibility_alpha_unfrozen",
+            "v2_only": "accessibility_alpha_v2wd",
+            "v2_w4": "accessibility_alpha_v2w4wd",
+            "d4_adapter": "accessibility_alpha_d4adapter_wd"}[WD_MODE]
+OUT = Path("/root/parity/analysis_output") / OUT_NAME
 OUT.mkdir(parents=True, exist_ok=True)
 CKPT_DIR = Path("/root/parity/analysis_output/accessibility_ckpts")
 CKPT_DIR.mkdir(parents=True, exist_ok=True)
@@ -79,11 +104,32 @@ def init_lin(rows, cols, gen):
     return torch.randn(rows, cols, generator=gen, device=DEV, dtype=DT) / np.sqrt(N)
 
 
-def forward(E, V1, V2, W, x):
+def forward(E, V1, V2, W, x, V1_adapter=None, return_parts=False):
     h0 = x @ E.T
-    h1 = h0 + torch.relu(h0 @ V1.T)
-    h2 = h1 + torch.relu(h1 @ V2.T)
-    return h1, h2 @ W.T
+    h1_base = h0 + torch.relu(h0 @ V1.T)
+    h1_adapter = (torch.zeros_like(h1_base) if V1_adapter is None else
+                  torch.relu(h0 @ V1_adapter.T))
+    h1 = h1_base + h1_adapter
+    h2_residual = torch.relu(h1 @ V2.T)
+    out = (h1 + h2_residual) @ W.T
+    if return_parts:
+        return h1, out, (h1_base, h1_adapter, h2_residual)
+    return h1, out
+
+
+def d4_route_contributions(parts, w4):
+    """Signed target coefficients from base, adapter, and block-2 residual."""
+    h1_base, h1_adapter, h2_residual = parts
+    target = CHI[QUAD]
+    q4_adapter = (h1_adapter * target.unsqueeze(1)).mean(dim=0)
+    q4_block2 = (h2_residual * target.unsqueeze(1)).mean(dim=0)
+    return dict(
+        f4_base=float(((h1_base @ w4) * target).mean()),
+        f4_adapter=float(((h1_adapter @ w4) * target).mean()),
+        f4_block2=float(((h2_residual @ w4) * target).mean()),
+        Q4_adapter=float(q4_adapter.norm()),
+        Q4_block2=float(q4_block2.norm()),
+    )
 
 
 def qstats(h1):
@@ -94,8 +140,7 @@ def qstats(h1):
                 R=q2.mean() / max(q1.mean(), 1e-30), Q4=q[QUAD])
 
 
-def classify(h1, V2, w4):
-    z = h1 @ V2.T
+def classify_preactivation(z, w4):
     a = torch.relu(z)
     c4 = (a * CHI[QUAD].unsqueeze(1)).mean(dim=0)
     contrib = (w4 * c4).abs()
@@ -118,6 +163,10 @@ def classify(h1, V2, w4):
                 frac22_w=float((wgt * pair[rel]).sum()),
                 frac1111_w=float((wgt * singl[rel]).sum()),
                 f22_n=n22 / n, f1111_n=n14 / n, fmix_n=(n - n22 - n14) / n)
+
+
+def classify(h1, V2, w4):
+    return classify_preactivation(h1 @ V2.T, w4)
 
 
 rows, traj_rows, pre_info = [], [], {}
@@ -161,63 +210,131 @@ for seed in SEEDS:
     print(f"[seed {seed}] pretrain {t+1} steps loss {hist[-1]:.2e} R(a=1)={st1['R']:.3f}",
           flush=True)
 
+    # One seed-specific initialization is cloned into every (alpha, lambda)
+    # cell, so lambda is the only intervention within each alpha column.  A
+    # small nonzero scale preserves the pretrained representation at onset
+    # without the dead ReLU gradients produced by exact zero initialization.
+    if WD_MODE == "d4_adapter":
+        adapter_gen = torch.Generator(device=DEV).manual_seed(100_000 + seed)
+        adapter0 = ARGS.adapter_init_scale * init_lin(N, N, adapter_gen)
+    else:
+        adapter0 = None
+
     for alpha in ALPHAS:
         for lam in LAMBDAS:
-            E = ck[0].clone().requires_grad_(True)
-            V1 = (alpha * ck[1]).clone().requires_grad_(True)
+            freeze_base = WD_MODE == "d4_adapter"
+            E = ck[0].clone().requires_grad_(not freeze_base)
+            V1 = (alpha * ck[1]).clone().requires_grad_(not freeze_base)
+            V1_adapter = (adapter0.clone().requires_grad_(True)
+                          if adapter0 is not None else None)
             V2 = ck[2].clone().requires_grad_(True)
             W = ck[3].clone().requires_grad_(True)
             with torch.no_grad():
-                h1, _ = forward(E, V1, V2, W, X)
+                h1, _, parts = forward(E, V1, V2, W, X, V1_adapter,
+                                       return_parts=True)
                 R0 = qstats(h1)["R"]
-            groups = ([{"params": [V2], "weight_decay": lam},
+                R0_base = qstats(parts[0])["R"]
+            groups = ([{"params": [V1_adapter, V2], "weight_decay": lam},
+                       {"params": [W], "weight_decay": 0.0}]
+                      if WD_MODE == "d4_adapter" else
+                      [{"params": [V2], "weight_decay": lam},
                        {"params": [E, V1, W], "weight_decay": 0.0}]
-                      if ARGS.wd_block2_only else
+                      if WD_MODE in ("v2_only", "v2_w4") else
                       [{"params": [E, V1, V2, W], "weight_decay": lam}])
             opt = torch.optim.SGD(groups, lr=LR, momentum=MOM)
             hist2 = []
             for t2 in range(MAX2):
                 opt.zero_grad(set_to_none=True)
-                _, out = forward(E, V1, V2, W, X)
+                _, out = forward(E, V1, V2, W, X, V1_adapter)
                 l2a = ((out[:, 0] - Y2[:, 0]) ** 2).mean()
                 l2b = ((out[:, 1] - Y2[:, 1]) ** 2).mean()
                 l4 = ((out[:, 2] - Y4[:, 0]) ** 2).mean()
-                loss = l2a + l2b + l4
-                loss.backward()
+                data_loss = l2a + l2b + l4
+                # W is a single 3 x N parameter, so optimizer weight decay
+                # would also penalize the two d2 heads. Penalize only W[2]
+                # explicitly in controls with a decayed d4 readout.
+                w4_penalty = (lam / 2 * W[2].square().sum()
+                              if WD_MODE in ("v2_w4", "d4_adapter") else 0.0)
+                objective = data_loss + w4_penalty
+                objective.backward()
                 opt.step()
                 with torch.no_grad():
-                    sq = float(sum((p ** 2).sum() for p in (E, V1, V2, W)))
-                hist2.append(float(loss) + lam / 2 * sq)
+                    if WD_MODE == "global":
+                        reg_sq = float(sum(p.square().sum() for p in (E, V1, V2, W)))
+                    elif WD_MODE == "v2_w4":
+                        reg_sq = float(V2.square().sum() + W[2].square().sum())
+                    elif WD_MODE == "d4_adapter":
+                        reg_sq = float(V1_adapter.square().sum() +
+                                       V2.square().sum() + W[2].square().sum())
+                    else:
+                        reg_sq = float(V2.square().sum())
+                hist2.append(float(data_loss) + lam / 2 * reg_sq)
                 if t2 % SNAP_EVERY == 0 or t2 == MAX2 - 1:
                     with torch.no_grad():
-                        h1, out = forward(E, V1, V2, W, X)
+                        h1, out, parts = forward(E, V1, V2, W, X, V1_adapter,
+                                                 return_parts=True)
                         st = qstats(h1)
+                        st_base = qstats(parts[0])
                         cls = classify(h1, V2, W[2])
+                        routes = d4_route_contributions(parts, W[2])
+                        if V1_adapter is not None:
+                            z_adapter = (X @ E.T) @ V1_adapter.T
+                            adapter_cls = classify_preactivation(z_adapter, W[2])
+                        else:
+                            adapter_cls = dict(n_rel=0, frac22_w=np.nan,
+                                               frac1111_w=np.nan)
                         f4 = float((out[:, 2] * Y4[:, 0]).mean())
-                    traj_rows.append(dict(
-                        seed=seed, alpha=alpha, R0=R0, lam=lam, step=t2,
-                        R=st["R"], Q1=st["Q1"], Q2=st["Q2"], f4=f4, e4=1 - f4,
-                        l4=float(l4), l2=float(l2a + l2b),
-                        V1_norm=float(V1.norm()), V2_norm=float(V2.norm()),
-                        W_norm=float(W.norm()),
-                        **{k: cls[k] for k in ("frac22_w", "frac1111_w",
-                           "f22_n", "f1111_n", "fmix_n", "n_rel")}))
+                        traj_rows.append(dict(
+                            wd_mode=WD_MODE,
+                            seed=seed, alpha=alpha, R0=R0, R0_base=R0_base,
+                            lam=lam, step=t2,
+                            R=st["R"], Q1=st["Q1"], Q2=st["Q2"], f4=f4, e4=1 - f4,
+                            R_base=st_base["R"], Q4_base=st_base["Q4"],
+                            l4=float(l4), l2=float(l2a + l2b),
+                            V1_norm=float(V1.norm()), V2_norm=float(V2.norm()),
+                            W_norm=float(W.norm()), W4_norm=float(W[2].norm()),
+                            V1_adapter_norm=(float(V1_adapter.norm())
+                                             if V1_adapter is not None else 0.0),
+                            adapter_n_rel=adapter_cls["n_rel"],
+                            adapter_frac22_w=adapter_cls["frac22_w"],
+                            adapter_frac1111_w=adapter_cls["frac1111_w"],
+                            **routes,
+                            **{k: cls[k] for k in ("frac22_w", "frac1111_w",
+                               "f22_n", "f1111_n", "fmix_n", "n_rel")}))
                 if t2 >= MIN2 and (hist2[-1] < 1e-10 or
                                    (hist2[-5000] - hist2[-1]) / max(abs(hist2[-5000]), 1e-12) < 1e-4):
                     break
             with torch.no_grad():
-                h1, out = forward(E, V1, V2, W, X)
+                h1, out, parts = forward(E, V1, V2, W, X, V1_adapter,
+                                         return_parts=True)
                 st = qstats(h1)
+                st_base = qstats(parts[0])
                 cls = classify(h1, V2, W[2])
+                routes = d4_route_contributions(parts, W[2])
+                if V1_adapter is not None:
+                    z_adapter = (X @ E.T) @ V1_adapter.T
+                    adapter_cls = classify_preactivation(z_adapter, W[2])
+                else:
+                    adapter_cls = dict(n_rel=0, frac22_w=np.nan,
+                                       frac1111_w=np.nan)
                 f4 = float((out[:, 2] * Y4[:, 0]).mean())
                 acc = float((torch.sign(out[:, 2:3]) == Y4).float().mean())
-            rows.append(dict(seed=seed, alpha=alpha, R0=R0, lam=lam, steps=t2 + 1,
+            rows.append(dict(wd_mode=WD_MODE,
+                             seed=seed, alpha=alpha, R0=R0, R0_base=R0_base,
+                             lam=lam, steps=t2 + 1,
                              R_final=st["R"], Q1_f=st["Q1"], Q2_f=st["Q2"],
+                             R_base_f=st_base["R"], Q4_base_f=st_base["Q4"],
                              f4=f4, e4=1 - f4, acc=acc,
                              l4=float(((out[:, 2] - Y4[:, 0]) ** 2).mean()),
                              l2=float(((out[:, :2] - Y2) ** 2).mean()),
                              V1_norm=float(V1.norm()), V2_norm=float(V2.norm()),
-                             W_norm=float(W.norm()),
+                             W_norm=float(W.norm()), W4_norm=float(W[2].norm()),
+                             V1_adapter_norm=(float(V1_adapter.norm())
+                                              if V1_adapter is not None else 0.0),
+                             adapter_n_rel=adapter_cls["n_rel"],
+                             adapter_frac22_w=adapter_cls["frac22_w"],
+                             adapter_frac1111_w=adapter_cls["frac1111_w"],
+                             **routes,
                              **{k: cls[k] for k in ("frac22_w", "frac1111_w",
                                 "f22_n", "f1111_n", "fmix_n", "n_rel")}))
             print(f"[s{seed}] a={alpha:<4} R0={R0:.3f} lam={lam:<7} steps={t2+1} "

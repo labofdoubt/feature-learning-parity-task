@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import time
 import warnings
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,19 +26,29 @@ from .data import (
     REUSE_STAR_TARGET_SUPPORTS,
     REUSE_STAR_SHARED_SUPPORT,
     REUSE_STAR_PRIVATE_SUPPORTS,
+    check_walsh_clusters_args,
+    check_walsh_mode_args,
     degree_slices_for_targets,
     exclusion_keys,
     labels_from_inputs,
     make_dataset,
     make_hierarchical_dataset,
     make_hierarchical_degree2_dataset,
+    make_hierarchical_symmetric_dataset,
+    make_hierarchical_symmetric_degree2_dataset,
     make_reuse_star_dataset,
     make_uniform_eval_dataset,
+    make_walsh_clusters_dataset,
+    make_walsh_single_mode_dataset,
     sample_hierarchical_degree2_inputs,
     sample_hierarchical_inputs,
+    sample_hierarchical_symmetric_inputs,
+    sample_hierarchical_symmetric_degree2_inputs,
     sample_inputs_excluding,
     sample_reuse_star_inputs,
     sample_unique_inputs_excluding,
+    sample_walsh_clusters_inputs,
+    sample_walsh_single_mode_inputs,
     save_dataset,
     target_names,
 )
@@ -53,6 +64,21 @@ def max_target_degree_for_model(model_config) -> int | None:
     if not model_config.use_layerwise_readouts:
         return None
     return min(model_config.relevant_dim, 2**model_config.L)
+
+
+def log_scale_checkpoint_steps(num_steps: int) -> frozenset[int]:
+    """Logarithmic checkpoint grid: {1..9}x10^k for every decade from 10 up to
+    num_steps, plus num_steps itself (e.g. 10,20,...,90,100,200,...,num_steps)."""
+    steps: set[int] = set()
+    decade = 10
+    while decade <= num_steps:
+        for k in range(1, 10):
+            s = k * decade
+            if s <= num_steps:
+                steps.add(s)
+        decade *= 10
+    steps.add(num_steps)
+    return frozenset(steps)
 
 
 def resolve_device(device_name: str) -> torch.device:
@@ -186,7 +212,7 @@ def train_set_metrics(
     return {name.replace("test_", "train_set_", 1): value for name, value in metrics.items()}
 
 
-def train(config: ExperimentConfig) -> Path:
+def train(config: ExperimentConfig, resume_from: str | Path | None = None) -> Path:
     if config.task.task_type == "reuse_star":
         return _train_reuse_star(config)
     training = config.training
@@ -275,9 +301,76 @@ def train(config: ExperimentConfig) -> Path:
 
     task_rho = task_config.data_rho
     task_distribution = task_config.data_distribution
-    use_nonuniform = task_rho > 0.0 and task_distribution != "uniform"
-    use_degree2 = use_nonuniform and task_distribution == "hierarchical_degree2"
+    if task_distribution == "walsh_single_mode":
+        # walsh_single_mode admits rho in [-1, 1]; any nonzero rho is non-uniform.
+        use_nonuniform = task_rho != 0.0
+    elif task_distribution == "walsh_clusters":
+        # Per-cluster rho values are authoritative; the scalar data_rho is ignored.
+        _walsh_clusters = check_walsh_clusters_args(
+            task_config.data_walsh_clusters, task_config.input_dim
+        )
+        if task_rho != 0.0:
+            warnings.warn(
+                "data_rho is ignored for walsh_clusters; the per-cluster rho values "
+                "in data_walsh_clusters apply instead.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        use_nonuniform = any(
+            alpha > 0.0 and rho_j != 0.0 for _, rho_j, alpha in _walsh_clusters
+        )
+    else:
+        use_nonuniform = task_rho > 0.0 and task_distribution != "uniform"
     eval_noise_repeats = task_config.eval_noise_repeats
+
+    # Dispatch table: distribution name → (per-step sampler, dataset factory, kind label)
+    _NONUNIFORM_DISPATCH = {
+        "hierarchical_degree2": (
+            sample_hierarchical_degree2_inputs,
+            make_hierarchical_degree2_dataset,
+            "nonuniform_hierarchical_degree2",
+        ),
+        "hierarchical_symmetric": (
+            sample_hierarchical_symmetric_inputs,
+            make_hierarchical_symmetric_dataset,
+            "nonuniform_hierarchical_symmetric",
+        ),
+        "hierarchical_symmetric_degree2": (
+            sample_hierarchical_symmetric_degree2_inputs,
+            make_hierarchical_symmetric_degree2_dataset,
+            "nonuniform_hierarchical_symmetric_degree2",
+        ),
+    }
+    if task_distribution == "walsh_single_mode":
+        # Validate the mode up front (even at rho=0, when the sampler is unused).
+        _walsh_mode = check_walsh_mode_args(
+            task_config.data_walsh_mode, task_config.input_dim, task_rho
+        )
+        _sample_fn = partial(sample_walsh_single_mode_inputs, mode_indices=_walsh_mode)
+        _make_nonuniform_fn = partial(make_walsh_single_mode_dataset, mode_indices=_walsh_mode)
+        _nonuniform_kind = "nonuniform_walsh_single_mode"
+    elif task_distribution == "walsh_clusters":
+        # _walsh_clusters was validated above. Print the effective global Walsh
+        # coefficients c_j = alpha_j * rho_j so runs are self-documenting.
+        _combined: dict[tuple[int, ...], float] = {}
+        for j, (mode_j, rho_j, alpha_j) in enumerate(_walsh_clusters):
+            print(
+                f"Walsh cluster {j}: mode={list(mode_j)} rho={rho_j} "
+                f"normalized_weight={alpha_j:.4f} effective_coefficient={alpha_j * rho_j:.4f}"
+            )
+            _combined[mode_j] = _combined.get(mode_j, 0.0) + alpha_j * rho_j
+        for mode_j, coeff in _combined.items():
+            if sum(1 for m, _, _ in _walsh_clusters if m == mode_j) > 1:
+                print(f"Walsh combined mode {list(mode_j)}: coefficient={coeff:.4f}")
+        _clusters_cfg = task_config.data_walsh_clusters
+        _sample_fn = partial(sample_walsh_clusters_inputs, clusters=_clusters_cfg)
+        _make_nonuniform_fn = partial(make_walsh_clusters_dataset, clusters=_clusters_cfg)
+        _nonuniform_kind = "nonuniform_walsh_clusters"
+    else:
+        _sample_fn, _make_nonuniform_fn, _nonuniform_kind = _NONUNIFORM_DISPATCH.get(
+            task_distribution,
+            (sample_hierarchical_inputs, make_hierarchical_dataset, "nonuniform_hierarchical"),
+        )
 
     # --- Uniform exhaustive eval dataset (fixed for the whole run) ---------------
     # Enumerates all 2^relevant_dim relevant-bit configs (for k<=20) with
@@ -314,32 +407,18 @@ def train(config: ExperimentConfig) -> Path:
         n_nonuniform = eval_uniform.x.shape[0]
         gen_nonuniform = torch.Generator(device=device)
         gen_nonuniform.manual_seed(training.seed + 2_000_003)
-        if use_degree2:
-            eval_nonuniform = make_hierarchical_degree2_dataset(
-                n_nonuniform,
-                task_rho,
-                task_config.relevant_dim,
-                task_config.input_dim,
-                device,
-                dtype,
-                effective_exclude,
-                max_degree,
-                generator=gen_nonuniform,
-            )
-            kind_str = "nonuniform_hierarchical_degree2"
-        else:
-            eval_nonuniform = make_hierarchical_dataset(
-                n_nonuniform,
-                task_rho,
-                task_config.relevant_dim,
-                task_config.input_dim,
-                device,
-                dtype,
-                effective_exclude,
-                max_degree,
-                generator=gen_nonuniform,
-            )
-            kind_str = "nonuniform_hierarchical"
+        eval_nonuniform = _make_nonuniform_fn(
+            n_nonuniform,
+            task_rho,
+            task_config.relevant_dim,
+            task_config.input_dim,
+            device,
+            dtype,
+            effective_exclude,
+            max_degree,
+            generator=gen_nonuniform,
+        )
+        kind_str = _nonuniform_kind
         eval_nonuniform_path = output_dir / "eval_nonuniform.pt"
         torch.save(
             {
@@ -368,26 +447,15 @@ def train(config: ExperimentConfig) -> Path:
         if use_nonuniform:
             gen_train = torch.Generator(device=device)
             gen_train.manual_seed(training.seed)
-            if use_degree2:
-                train_x, _ = sample_hierarchical_degree2_inputs(
-                    training.train_samples,
-                    task_config.relevant_dim,
-                    task_config.input_dim,
-                    device,
-                    dtype,
-                    task_rho,
-                    generator=gen_train,
-                )
-            else:
-                train_x, _ = sample_hierarchical_inputs(
-                    training.train_samples,
-                    task_config.relevant_dim,
-                    task_config.input_dim,
-                    device,
-                    dtype,
-                    task_rho,
-                    generator=gen_train,
-                )
+            train_x, _ = _sample_fn(
+                training.train_samples,
+                task_config.relevant_dim,
+                task_config.input_dim,
+                device,
+                dtype,
+                task_rho,
+                generator=gen_train,
+            )
         else:
             train_x = sample_unique_inputs_excluding(
                 training.train_samples,
@@ -420,6 +488,31 @@ def train(config: ExperimentConfig) -> Path:
         target_names_=target_names_,
     ).to(device=device, dtype=dtype)
     optimizer = build_optimizer(model, training.optimizer)
+
+    # Resume: load model+optimizer state from a checkpoint and continue from its
+    # step to training.num_steps. The config in use is the CURRENT yaml (so
+    # num_steps can be raised); only states and the step counter come from the
+    # checkpoint. Datasets are regenerated identically from the seeds above.
+    start_step = 0
+    if resume_from is not None:
+        payload = torch.load(resume_from, map_location=device)
+        model.load_state_dict(payload["model_state"])
+        if payload.get("optimizer_state") is not None:
+            optimizer.load_state_dict(payload["optimizer_state"])
+        start_step = int(payload["step"])
+        if start_step >= training.num_steps:
+            raise ValueError(
+                f"resume checkpoint is at step {start_step}, but num_steps is "
+                f"{training.num_steps}; raise training.num_steps to continue"
+            )
+        if training.curriculum:
+            warnings.warn(
+                "resuming with curriculum=true restarts gating at the lowest degree",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        print(f"Resumed from {resume_from} at step {start_step}; continuing to {training.num_steps}")
+
     if not 0.0 <= training.teacher_forcing_ratio <= 1.0:
         raise ValueError("teacher_forcing_ratio must be in [0, 1]")
     uses_scheduled_sampling = training.teacher_forcing_ratio < 1.0 and hasattr(model, "generate")
@@ -456,14 +549,29 @@ def train(config: ExperimentConfig) -> Path:
             f"Starting with d{curriculum_degrees[0]} only."
         )
 
+    log_ckpt_steps = (
+        log_scale_checkpoint_steps(training.num_steps)
+        if training.checkpoint_log_scale
+        else frozenset()
+    )
+    if training.checkpoint_log_scale:
+        print(f"Log-scale checkpoints: {len(log_ckpt_steps)} steps "
+              f"(min {min(log_ckpt_steps)}, max {max(log_ckpt_steps)})")
+
     history = []
+    if start_step > 0:
+        # Keep the pre-resume rows so metrics.csv stays one continuous curve.
+        prior_metrics = output_dir / "metrics.csv"
+        if prior_metrics.exists():
+            history = pd.read_csv(prior_metrics).to_dict("records")
     # Shuffled epochs over the fixed pool, so every training input is seen equally often.
     epoch_order = torch.empty(0, device=device, dtype=torch.long)
     epoch_cursor = 0
     start_time = time.perf_counter()
     progress = tqdm(
-        range(1, training.num_steps + 1),
+        range(start_step + 1, training.num_steps + 1),
         total=training.num_steps,
+        initial=start_step,
         desc="training",
         unit="step",
         dynamic_ncols=True,
@@ -472,24 +580,14 @@ def train(config: ExperimentConfig) -> Path:
         model.train()
         if train_data is None:
             if use_nonuniform:
-                if use_degree2:
-                    x_batch, _ = sample_hierarchical_degree2_inputs(
-                        training.batch_size,
-                        task_config.relevant_dim,
-                        task_config.input_dim,
-                        device,
-                        dtype,
-                        task_rho,
-                    )
-                else:
-                    x_batch, _ = sample_hierarchical_inputs(
-                        training.batch_size,
-                        task_config.relevant_dim,
-                        task_config.input_dim,
-                        device,
-                        dtype,
-                        task_rho,
-                    )
+                x_batch, _ = _sample_fn(
+                    training.batch_size,
+                    task_config.relevant_dim,
+                    task_config.input_dim,
+                    device,
+                    dtype,
+                    task_rho,
+                )
             else:
                 x_batch = sample_inputs_excluding(
                     training.batch_size,
@@ -555,7 +653,10 @@ def train(config: ExperimentConfig) -> Path:
         )
 
         should_validate = training.validate_every and step % training.validate_every == 0
-        should_checkpoint = training.checkpoint_every and step % training.checkpoint_every == 0
+        if training.checkpoint_log_scale:
+            should_checkpoint = step in log_ckpt_steps
+        else:
+            should_checkpoint = training.checkpoint_every and step % training.checkpoint_every == 0
         # One evaluation serves both, so coinciding schedules do not validate twice.
         metrics = (
             evaluate(model, test_data.x, test_data.y, training.batch_size, target_names_)
@@ -977,6 +1078,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=False)
     parser.add_argument("--write-default-config", type=str, required=False)
+    parser.add_argument("--resume-from", type=str, required=False,
+                        help="checkpoint (.pt) to load model+optimizer state from; "
+                             "training continues from its step to the config's num_steps")
     args = parser.parse_args()
 
     if args.write_default_config:
@@ -984,7 +1088,7 @@ def main() -> None:
         return
     if not args.config:
         raise SystemExit("Provide --config or --write-default-config")
-    train(load_config(args.config))
+    train(load_config(args.config), resume_from=args.resume_from)
 
 
 if __name__ == "__main__":

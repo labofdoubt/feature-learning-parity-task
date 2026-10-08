@@ -80,6 +80,38 @@ def test_threshold_above_every_coefficient_marks_all_neurons_dead():
     assert set(_labels(model, 2, tau=10.0)) == {"dead"}
 
 
+def test_route_shares_of_the_hand_built_network_are_exact():
+    from analysis.accessibility.plot_two_block_langevin_phase import neuron_route_shares
+
+    model = _hand_built_model()
+    with torch.no_grad():   # block-2 readout: 2 on the 2+2->4 unit, 1 on the raw-bit gate
+        model.w4.zero_()
+        model.w4[0], model.w4[2] = 2.0, 1.0
+    shares = neuron_route_shares(model, tau=1e-6)
+    # Quad amplitudes: block 2 has |a|=1/4 on unit 0 (2+2->4) and unit 2 (gate);
+    # block 1 has |a|=1/8 on its gate (unit 6).
+    assert np.isclose(shares["phi_out"], 2 / 3)
+    assert np.isclose(shares["phi_sq"], 1 / 2)
+    assert np.isclose(shares["f_C_sq"], (1 / 16) / (1 / 64 + 1 / 16 + 1 / 16))
+    assert shares["n_compose_block2"] == 1
+
+
+def test_lower_objective_selection_keeps_whole_runs():
+    from analysis.accessibility.plot_two_block_langevin_phase import lower_objective_selection
+
+    runs = pd.DataFrame({
+        "lambda0": [1e-3, 1e-3, 1e-2, 1e-2], "ratio": [1.0, 1.0, 1.0, 1.0],
+        "protocol": ["parent_warm", "joint", "parent_warm", "joint"],
+        "objective": [0.2, 0.3, 0.5, 0.4], "phase": ["H_C", "H_D", "H_C", "H_D"],
+        "phi_out": [0.9, np.nan, np.nan, 0.0],
+    })
+    chosen = lower_objective_selection(runs).set_index("lambda0")
+    assert chosen.loc[1e-3, "selected_from"] == "parent_warm"
+    assert chosen.loc[1e-3, "phi_out"] == 0.9
+    assert chosen.loc[1e-2, "selected_from"] == "joint"
+    assert chosen.loc[1e-2, "phase"] == "H_D" and chosen.loc[1e-2, "phi_out"] == 0.0
+
+
 def test_phase_boundary_follows_edges_between_hc_and_hd_cells_only():
     lambda0s, ratios = np.array([1.0, 10.0, 100.0]), np.array([1.0, 10.0])
     phases = pd.DataFrame({
