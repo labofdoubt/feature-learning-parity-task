@@ -160,8 +160,9 @@ class TopKBottleneck(nn.Module):
             raise ValueError(f"Need 1 <= k <= dim, got k={k}, dim={dim}")
         if selection not in ("activation", "scores"):
             raise ValueError(f"selection must be 'activation' or 'scores', got {selection!r}")
-        if score_grad not in ("hard", "laplace_ste", "gumbel"):
-            raise ValueError(f"score_grad must be 'hard', 'laplace_ste' or 'gumbel', got {score_grad!r}")
+        if score_grad not in ("hard", "laplace_ste", "gumbel", "gumbel_reinforce"):
+            raise ValueError(
+                f"score_grad must be 'hard', 'laplace_ste', 'gumbel' or 'gumbel_reinforce', got {score_grad!r}")
         self.dim = dim
         self.k = k
         self.abs_topk = abs_topk
@@ -173,6 +174,11 @@ class TopKBottleneck(nn.Module):
         self.scores = (
             nn.Parameter(1.0 + score_init_std * torch.randn(dim)) if selection == "scores" else None
         )
+        # gumbel_reinforce: log p of the last sampled support (differentiable in the
+        # scores) and the EMA loss baseline, consumed by reinforce_surrogate().
+        self.last_logp: torch.Tensor | None = None
+        self.register_buffer("reinforce_baseline", torch.zeros(()))
+        self.register_buffer("reinforce_steps", torch.zeros((), dtype=torch.long))
         if md_decouple:
             # Magnitude-direction decoupled linears with their own init (see MDLinear).
             self.encoder: nn.Module = MDLinear(width, dim, width, bias)
@@ -216,11 +222,14 @@ class TopKBottleneck(nn.Module):
         s = self.scores
         r = s.abs() if self.abs_topk else s
         rank = r.detach()
-        if self.score_grad == "gumbel" and self.training:
+        gumbel = self.score_grad in ("gumbel", "gumbel_reinforce") and self.training
+        if gumbel:
             u = torch.rand_like(rank).clamp_(1e-10, 1.0 - 1e-10)
             rank = rank + self.score_temperature * (-torch.log(-torch.log(u)))
-        _, idx = rank.topk(self.k)
+        _, idx = rank.topk(self.k)  # descending: the Plackett-Luce draw order
         hard = torch.zeros_like(s).scatter_(0, idx, 1.0)
+        if gumbel and self.score_grad == "gumbel_reinforce":
+            self.last_logp = self._plackett_luce_logp(r, idx)
         if self.score_grad == "laplace_ste" and self.k < self.dim:
             ranked = r.detach().sort(descending=True).values
             theta = 0.5 * (ranked[self.k - 1] + ranked[self.k])
@@ -237,6 +246,34 @@ class TopKBottleneck(nn.Module):
         if self.md_decouple:
             self.encoder.project_()
             self.decoder.project_()
+
+    def _plackett_luce_logp(self, r: torch.Tensor, idx: torch.Tensor) -> torch.Tensor:
+        """log p of drawing the ordered support `idx` under Plackett-Luce with
+        logits r / tau: sum_t [ r_{i_t}/tau - logsumexp_{j not yet drawn} r_j/tau ]."""
+        logits = r / self.score_temperature
+        remaining = torch.ones_like(logits, dtype=torch.bool)
+        logp = logits.new_zeros(())
+        for i in idx:
+            logp = logp + logits[i] - torch.logsumexp(logits.masked_fill(~remaining, float("-inf")), dim=0)
+            remaining = remaining.clone()
+            remaining[i] = False
+        return logp
+
+    def reinforce_surrogate(self, loss: torch.Tensor, scale: float, decay: float = 0.99) -> torch.Tensor:
+        """scale * (loss - baseline) * log p(support) for the last training forward,
+        then update the EMA baseline. Returns 0 when there is no sampled support."""
+        if self.last_logp is None:
+            return loss.new_zeros(())
+        reward = loss.detach()
+        if int(self.reinforce_steps) == 0:
+            baseline = reward
+        else:
+            baseline = self.reinforce_baseline
+        surrogate = scale * (reward - baseline) * self.last_logp
+        self.reinforce_baseline.copy_(decay * baseline + (1 - decay) * reward)
+        self.reinforce_steps += 1
+        self.last_logp = None
+        return surrogate
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         """The sparse code: exactly K nonzero entries along the last dim."""
@@ -360,6 +397,17 @@ class BottleneckMixin:
         Call after each optimizer step; a no-op without bottleneck_md_decouple."""
         for bottleneck in self.bottleneck_modules():
             bottleneck.md_project_()
+
+    def reinforce_surrogate(self, loss: torch.Tensor) -> torch.Tensor:
+        """Sum of the bottlenecks' REINFORCE surrogates for the current step (zero
+        unless bottleneck_score_grad="gumbel_reinforce"); add it to the loss before
+        backward. Depends only on the selection scores."""
+        scale = float(getattr(self.config, "bottleneck_reinforce_scale", 1.0))  # type: ignore[attr-defined]
+        total = loss.new_zeros(())
+        for bottleneck in self.bottleneck_modules():
+            if bottleneck.score_grad == "gumbel_reinforce":
+                total = total + bottleneck.reinforce_surrogate(loss, scale)
+        return total
 
     def hidden_parameters(self):
         """Every block parameter except the bottleneck encoders/decoders."""

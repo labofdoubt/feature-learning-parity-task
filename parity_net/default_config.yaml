@@ -31,6 +31,7 @@ model:
   bottleneck_md_decouple: false
   bottleneck_selection: activation
   bottleneck_score_grad: hard
+  bottleneck_reinforce_scale: 1.0
   bottleneck_score_temperature: 0.01
   bottleneck_score_init_std: 0.01
   readout_before_bottleneck: false

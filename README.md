@@ -139,7 +139,13 @@ once per forward (shared across the batch, so the mask stays input-independent)
 before the hard top-K, giving dropped channels a chance to be selected and
 trained, with the exact `hard` gradient and a deterministic top-K in eval mode.
 `bottleneck_score_temperature` is the Laplace scale or the Gumbel noise
-magnitude, in score units. Scores start
+magnitude, in score units. `gumbel_reinforce` is `gumbel` plus a REINFORCE term:
+the Gumbel-top-K draw is a Plackett-Luce sample with logits `r/tau`, and the
+training loop adds `bottleneck_reinforce_scale · (loss − baseline) · log p(support)`
+to the objective (baseline = EMA of the loss, decay 0.99), so every score, kept
+or not, receives the policy-gradient estimate of `d E[loss] / d s` on top of the
+exact gain gradient; `d log p / d s` is of order `1/tau`, so reduce the scale if
+the scores jitter. Scores start
 at `1 + N(0, bottleneck_score_init_std²)` and belong to the bottleneck optimizer
 group. The residual stream
 returned by `return_activations=True` is the post-bottleneck stream, and

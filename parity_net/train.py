@@ -640,7 +640,7 @@ def train(config: ExperimentConfig, resume_from: str | Path | None = None) -> Pa
         if model_config.use_readout_barrier:
             barrier = model.readout_barrier(barrier_c, training.barrier_lambda)
         loss = mse + barrier
-        loss.backward()
+        (loss + model.reinforce_surrogate(loss)).backward()
         optimizer.step()
         model.md_project_()
 
@@ -1000,7 +1000,7 @@ def _train_reuse_star(config: ExperimentConfig) -> Path:
         per_target_mse = F.mse_loss(pred, y_batch, reduction="none").mean(dim=0)  # (3,)
         mse = (per_target_mse * active_mask).sum() / active_mask.sum()
         loss = mse + barrier
-        loss.backward()
+        (loss + model.reinforce_surrogate(loss)).backward()
         optimizer.step()
         model.md_project_()
 

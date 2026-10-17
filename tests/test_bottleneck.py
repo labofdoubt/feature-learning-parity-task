@@ -349,6 +349,56 @@ def test_score_selection_gumbel():
                 bottleneck_score_temperature=0.0).bottleneck_ks()
 
 
+def test_score_selection_gumbel_reinforce():
+    torch.manual_seed(0)
+    tau = 0.5
+    b = TopKBottleneck(width=4, dim=6, k=2, abs_topk=False, encoder_variance=None, decoder_variance=None,
+                       bias=False, selection="scores", score_grad="gumbel_reinforce", score_temperature=tau)
+    b.train()
+    with torch.no_grad():
+        b.scores.copy_(torch.tensor([1.0, 0.8, 0.6, 0.4, 0.2, 0.0]))
+    m = b.score_mask()
+    assert b.last_logp is not None and int((m != 0).sum()) == 2
+    idx = (m != 0).nonzero().flatten()
+    # the stored log p matches the Plackett-Luce formula for the drawn order
+    r = b.scores.detach(); logits = r / tau
+    order = idx[torch.argsort(-r[idx])]      # descending clean rank == draw order for this mask
+    manual = 0.0; remaining = torch.ones(6, dtype=torch.bool)
+    for i in order:
+        manual = manual + logits[i] - torch.logsumexp(logits.masked_fill(~remaining, float("-inf")), 0)
+        remaining[i] = False
+    # (the drawn order is the perturbed-rank order; recompute with it directly)
+    assert torch.allclose(b._plackett_luce_logp(r, order), manual, atol=1e-6)
+    # surrogate: first call uses the loss itself as baseline (zero term), then EMA
+    loss = torch.tensor(0.7)
+    s0 = b.reinforce_surrogate(loss, scale=1.0)
+    assert s0.item() == 0.0 and b.reinforce_baseline.item() == pytest.approx(0.7) and b.last_logp is None
+    b.score_mask()
+    s1 = b.reinforce_surrogate(torch.tensor(0.5), scale=2.0)
+    assert s1.requires_grad
+    s1.backward()
+    assert torch.all(b.scores.grad != 0)                  # every score gets the policy gradient
+    assert b.reinforce_baseline.item() == pytest.approx(0.99 * 0.7 + 0.01 * 0.5)
+    # eval: deterministic, no log p, surrogate is zero
+    b.eval(); b.score_mask()
+    assert b.last_logp is None and b.reinforce_surrogate(torch.tensor(1.0), 1.0).item() == 0.0
+    # model-level: the surrogate is zero for other regimes and only depends on scores
+    model = build_model(_config(bottleneck_selection="scores", bottleneck_score_grad="gumbel_reinforce",
+                                bottleneck_score_temperature=0.05), output_dim=3)
+    model.train()
+    x = torch.randint(0, 2, (8, 8)).float() * 2 - 1
+    loss = model(x).square().mean()
+    model.reinforce_surrogate(loss)          # first step: baseline init
+    loss = model(x).square().mean()
+    sur = model.reinforce_surrogate(loss)
+    sur.backward()
+    assert all(b.bottleneck.scores.grad is not None for b in model.blocks)
+    assert all(b.linear.weight.grad is None for b in model.blocks)
+    plain = build_model(_config(bottleneck_selection="scores", bottleneck_score_grad="gumbel"), output_dim=3)
+    plain.train(); l = plain(x).square().mean()
+    assert plain.reinforce_surrogate(l).item() == 0.0
+
+
 def test_score_selection_model_config_and_training_step():
     torch.manual_seed(0)
     config = _config(bottleneck_k=[2, 2, 2], bottleneck_selection="scores",
