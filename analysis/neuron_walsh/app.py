@@ -40,9 +40,17 @@ RUNS_ROOT = Path(ARGS.runs_root)
 def list_runs(root: str) -> list[str]:
     root = Path(root)
     # a run is hidden from the app (not deleted) by `touch <run>/.hide_from_streamlit`
-    return sorted(d.name for d in root.iterdir()
-                  if (d / "analysis" / "neuron_walsh").is_dir()
-                  and not (d / ".hide_from_streamlit").exists())
+    names = sorted(d.name for d in root.iterdir()
+                   if (d / "analysis" / "neuron_walsh").is_dir()
+                   and not (d / ".hide_from_streamlit").exists())
+    # optional <runs-root>/.streamlit_order: one run name per line, listed runs
+    # come first in that order, the rest keep alphabetical order
+    order_file = root / ".streamlit_order"
+    if order_file.exists():
+        wanted = [l.strip() for l in order_file.read_text().splitlines() if l.strip()]
+        rank = {n: i for i, n in enumerate(wanted)}
+        names.sort(key=lambda n: (rank.get(n, len(rank)), n))
+    return names
 
 
 @st.cache_data(show_spinner=False)
