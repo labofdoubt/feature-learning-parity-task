@@ -155,6 +155,19 @@ order_ref = st.sidebar.radio("Neuron ordering reference",
                               "final checkpoint"], index=0)
 min_power = st.sidebar.number_input("Noise floor: min neuron tracked power",
                                     value=1e-8, format="%.1e")
+log_color = st.sidebar.checkbox("log10 color scale for heatmaps", value=False,
+                                key="log_color")
+log_floor = st.sidebar.number_input("log-scale floor (values below clip here)",
+                                    value=1e-8, format="%.1e", key="log_floor",
+                                    disabled=not log_color)
+
+
+def heat_values(Z: np.ndarray, label: str) -> tuple[np.ndarray, str]:
+    """Apply the sidebar log scale to a heatmap matrix. Non-negative representations
+    are shown as log10(max(Z, floor)); the signed coefficient keeps a linear scale."""
+    if not log_color or label == "a":
+        return Z, label
+    return np.log10(np.maximum(Z, log_floor)), f"log10 {label}"
 
 # tracked modes = tree modes filtered by selected degrees (default: all 15)
 mode_sel = [m for m in data["modes"] if m["degree"] in degrees]
@@ -281,6 +294,9 @@ with tabs[0]:
 
     Z, zlabel = rep_matrix()
     Z = Z[np.ix_(mord, nord)]
+    Z, zlabel = heat_values(Z, zlabel)
+    if log_color and zlabel == "a":
+        st.caption("log color scale is not applied to the signed coefficient; pick power or |a|.")
     # x must be POSITIONAL: with numeric x=nord, plotly places columns at the
     # coordinate value, silently undoing any neuron permutation.
     hover = ("neuron %{customdata[2]:.0f}<br>mode %{y}<br>" + zlabel + " %{z:.3e}<br>"
@@ -492,8 +508,9 @@ with tabs[2]:
             Zb, zl = Pb / (totb[None, :] + 1e-30), "p(S|j)"
         cdb = np.stack([nordb.astype(float), freq[nordb], totb[nordb],
                         varb[nordb]], axis=-1)[None, :, :].repeat(len(bw_sel), 0)
+        Zshow, zl = heat_values(Zb[:, nordb], zl)
         fig = go.Figure(go.Heatmap(
-            z=Zb[:, nordb], y=bw_names, x=np.arange(len(nordb)), customdata=cdb,
+            z=Zshow, y=bw_names, x=np.arange(len(nordb)), customdata=cdb,
             hovertemplate=("code neuron %{customdata[0]:.0f}<br>mode %{y}<br>" + zl +
                            " %{z:.3e}<br>selected %{customdata[1]:.3f} of inputs · "
                            "tracked power %{customdata[2]:.3e} · var %{customdata[3]:.3e}"),
