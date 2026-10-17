@@ -40,6 +40,21 @@ def save_checkpoint(
     torch.save(payload, path)
 
 
+# Buffers added after some checkpoints were written; a checkpoint without them
+# loads with the module defaults (the REINFORCE baseline restarts from the first
+# loss after a resume, nothing else changes).
+_OPTIONAL_BUFFER_SUFFIXES = (".reinforce_baseline", ".reinforce_steps")
+
+
+def load_model_state(model, state: dict) -> None:
+    """model.load_state_dict with missing optional buffers filled from the model."""
+    state = dict(state)
+    for key, value in model.state_dict().items():
+        if key not in state and key.endswith(_OPTIONAL_BUFFER_SUFFIXES):
+            state[key] = value
+    model.load_state_dict(state)
+
+
 def load_checkpoint(
     path: str | Path,
     device: torch.device,
@@ -101,7 +116,7 @@ def load_checkpoint(
         output_dim=output_dim,
         target_names_=target_names_,
     ).to(device)
-    model.load_state_dict(payload["model_state"])
+    load_model_state(model, payload["model_state"])
 
     optimizer = None
     if load_optimizer and payload.get("optimizer_state") is not None:

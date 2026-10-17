@@ -52,6 +52,7 @@ from .data import (
     save_dataset,
     target_names,
 )
+from .checkpoint import load_model_state
 from .model import build_model
 
 if TYPE_CHECKING:
@@ -508,7 +509,7 @@ def train(config: ExperimentConfig, resume_from: str | Path | None = None) -> Pa
     start_step = 0
     if resume_from is not None:
         payload = torch.load(resume_from, map_location=device)
-        model.load_state_dict(payload["model_state"])
+        load_model_state(model, payload["model_state"])
         if payload.get("optimizer_state") is not None:
             optimizer.load_state_dict(payload["optimizer_state"])
         start_step = int(payload["step"])

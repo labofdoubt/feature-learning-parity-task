@@ -429,5 +429,20 @@ def test_score_selection_model_config_and_training_step():
     assert md(x).shape == (16, 3)
 
 
+def test_checkpoint_without_reinforce_buffers_loads():
+    from parity_net.checkpoint import load_model_state
+    config = _config(bottleneck_selection="scores")
+    model = build_model(config, output_dim=3)
+    old_state = {k: v for k, v in model.state_dict().items()
+                 if not k.endswith((".reinforce_baseline", ".reinforce_steps"))}
+    assert len(old_state) < len(model.state_dict())
+    fresh = build_model(config, output_dim=3)
+    load_model_state(fresh, old_state)               # must not raise
+    x = torch.randint(0, 2, (4, 8)).float() * 2 - 1
+    assert torch.allclose(fresh(x), model(x))
+    with pytest.raises(RuntimeError):
+        fresh.load_state_dict({k: v for k, v in old_state.items() if "scores" not in k})
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
