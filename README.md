@@ -119,7 +119,23 @@ variances (`W_hat ~ N(0, 1/N)` entrywise, then scaled onto the sphere); the
 bottleneck group trains without weight decay and `wd_bottleneck` must stay unset.
 The gains and direction are ordinary parameters (`direction`, `raw_gain_row`,
 `raw_gain_col`), so any base optimizer works and `.weight` returns the fused
-matrix. `readout_before_bottleneck` is unaffected. The residual stream
+matrix. `readout_before_bottleneck` is unaffected.
+`bottleneck_selection` chooses what decides the K passing entries:
+`activation` (default) keeps the K largest encoder outputs per input, an
+input-dependent gate that can combine Walsh modes into new ones; `scores` gives
+each bottleneck a learnable score vector `s` with no input dependence, keeps
+the K largest-ranked scores (`|s|` under `bottleneck_abs_topk`) on every input
+and multiplies the kept channels by their score, so the bottleneck is the pure
+filter `W_dec · diag(m) · W_enc` with exactly K nonzero gains. Its gradient
+regime is `bottleneck_score_grad`: `hard` is the exact gradient (only selected
+scores learn, through the value they carry, so the selection changes only when
+a selected score is overtaken); `laplace_ste` keeps the hard mask in the
+forward and differentiates the selection indicator as a Laplace CDF with scale
+`bottleneck_score_temperature` (in score units), so scores within a few
+temperatures of the threshold, the midpoint between the K-th and (K+1)-th
+ranked scores, also receive gradient weighted by the Laplace pdf. Scores start
+at `1 + N(0, bottleneck_score_init_std²)` and belong to the bottleneck optimizer
+group. The residual stream
 returned by `return_activations=True` is the post-bottleneck stream, and
 `model.bottleneck_codes(x)` returns the sparse codes of every bottleneck.
 

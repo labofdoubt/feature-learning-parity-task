@@ -274,5 +274,85 @@ def test_md_decouple_model_optimizer_and_training_step():
     assert not build_model(_config(), output_dim=3).blocks[0].bottleneck.md_decouple
 
 
+def test_score_selection_hard_is_a_pure_filter():
+    torch.manual_seed(0)
+    b = TopKBottleneck(width=10, dim=6, k=2, abs_topk=True, encoder_variance=None, decoder_variance=None,
+                       bias=False, selection="scores", score_grad="hard")
+    assert b.scores.shape == (6,)
+    m = b.score_mask()
+    assert int((m != 0).sum()) == 2
+    kept = (m != 0).nonzero().flatten()
+    assert torch.allclose(m[kept], b.scores[kept])
+    x = torch.randn(5, 10)
+    codes = b.encode(x)
+    # same channels on every input, linear in the encoder output
+    assert torch.equal((codes != 0).float(), (m != 0).float().expand(5, -1))
+    assert torch.allclose(codes, b.encoder(x) * m)
+    # hard: only the selected scores get gradient
+    (b(x) ** 2).sum().backward()
+    g = b.scores.grad
+    assert torch.all(g[kept] != 0) and torch.all(g[(m == 0)] == 0)
+    # abs ranking keeps the largest |s|
+    with torch.no_grad():
+        b.scores.copy_(torch.tensor([0.1, -3.0, 0.2, 2.0, -0.5, 0.0]))
+    assert set(b.score_mask().nonzero().flatten().tolist()) == {1, 3}
+
+
+def test_score_selection_laplace_ste_gradient():
+    torch.manual_seed(0)
+    tau = 0.05
+    b = TopKBottleneck(width=4, dim=5, k=2, abs_topk=False, encoder_variance=None, decoder_variance=None,
+                       bias=False, selection="scores", score_grad="laplace_ste", score_temperature=tau)
+    with torch.no_grad():
+        b.scores.copy_(torch.tensor([1.0, 0.9, 0.7, 0.2, -1.0]))
+    m = b.score_mask()
+    assert set(m.nonzero().flatten().tolist()) == {0, 1}          # forward is hard, exact K
+    assert torch.allclose(m[:2], b.scores[:2]) and torch.all(m[2:] == 0)
+    v = torch.randn(5)
+    (m * v).sum().backward()
+    # d m_j / d s_j = hard_j + s_j * laplace_pdf(s_j - theta), theta = (0.9 + 0.7) / 2
+    theta = 0.8
+    s = b.scores.detach()
+    pdf = torch.exp(-(s - theta).abs() / tau) / (2 * tau)
+    hard = torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0])
+    expected = v * (hard + s * pdf)
+    assert torch.allclose(b.scores.grad, expected, atol=1e-5)
+    assert b.scores.grad[2] != 0 and abs(b.scores.grad[4]) < 1e-6   # near-threshold learns, far does not
+    # K == dim: no threshold, plain hard mask
+    full = TopKBottleneck(width=4, dim=3, k=3, abs_topk=False, encoder_variance=None, decoder_variance=None,
+                          bias=False, selection="scores", score_grad="laplace_ste", score_temperature=tau)
+    assert torch.allclose(full.score_mask(), full.scores)
+
+
+def test_score_selection_model_config_and_training_step():
+    torch.manual_seed(0)
+    config = _config(bottleneck_k=[2, 2, 2], bottleneck_selection="scores",
+                     bottleneck_score_grad="laplace_ste", bottleneck_score_temperature=0.02)
+    model = build_model(config, output_dim=3)
+    for b in model.blocks:
+        assert b.bottleneck.selection == "scores" and b.bottleneck.scores.shape == (16,)
+        assert (b.bottleneck.scores - 1).abs().max() < 0.1
+    opt = build_optimizer(model, OptimizerConfig(name="sgd", lr=1e-2, momentum=0.9, wd_bottleneck=0.01))
+    groups = {g["name"]: g for g in opt.param_groups}
+    assert any(p is model.blocks[0].bottleneck.scores for p in groups["bottleneck"]["params"])
+    x = torch.randint(0, 2, (16, 8)).float() * 2 - 1
+    codes_before = model.bottleneck_codes(x)
+    assert all(torch.all((c != 0).sum(-1) == 2) for c in codes_before)
+    model(x).square().sum().backward()
+    assert model.blocks[0].bottleneck.scores.grad is not None
+    opt.step()
+    # config validation and yaml round trip
+    with pytest.raises(ValueError):
+        _config(bottleneck_selection="nope").bottleneck_ks()
+    with pytest.raises(ValueError):
+        _config(bottleneck_score_grad="laplace_ste", bottleneck_score_temperature=0.0).bottleneck_ks()
+    plain = build_model(_config(), output_dim=3)
+    assert plain.blocks[0].bottleneck.scores is None
+    # works together with MD decoupling
+    md = build_model(_config(bottleneck_selection="scores", bottleneck_md_decouple=True), output_dim=3)
+    assert md.blocks[0].bottleneck.md_decouple and md.blocks[0].bottleneck.scores is not None
+    assert md(x).shape == (16, 3)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

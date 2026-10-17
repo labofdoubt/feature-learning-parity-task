@@ -150,14 +150,29 @@ class TopKBottleneck(nn.Module):
         decoder_variance: float | None,
         bias: bool,
         md_decouple: bool = False,
+        selection: str = "activation",
+        score_grad: str = "hard",
+        score_temperature: float = 0.01,
+        score_init_std: float = 0.01,
     ) -> None:
         super().__init__()
         if dim <= 0 or k <= 0 or k > dim:
             raise ValueError(f"Need 1 <= k <= dim, got k={k}, dim={dim}")
+        if selection not in ("activation", "scores"):
+            raise ValueError(f"selection must be 'activation' or 'scores', got {selection!r}")
+        if score_grad not in ("hard", "laplace_ste"):
+            raise ValueError(f"score_grad must be 'hard' or 'laplace_ste', got {score_grad!r}")
         self.dim = dim
         self.k = k
         self.abs_topk = abs_topk
         self.md_decouple = md_decouple
+        self.selection = selection
+        self.score_grad = score_grad
+        self.score_temperature = float(score_temperature)
+        # Input-independent selection scores (see ModelConfig.bottleneck_selection).
+        self.scores = (
+            nn.Parameter(1.0 + score_init_std * torch.randn(dim)) if selection == "scores" else None
+        )
         if md_decouple:
             # Magnitude-direction decoupled linears with their own init (see MDLinear).
             self.encoder: nn.Module = MDLinear(width, dim, width, bias)
@@ -179,7 +194,37 @@ class TopKBottleneck(nn.Module):
         self.last_codes: torch.Tensor | None = None
 
     def extra_repr(self) -> str:
-        return f"dim={self.dim}, k={self.k}, abs_topk={self.abs_topk}, md_decouple={self.md_decouple}"
+        extra = f", selection={self.selection}"
+        if self.selection == "scores":
+            extra += f", score_grad={self.score_grad}, score_temperature={self.score_temperature}"
+        return f"dim={self.dim}, k={self.k}, abs_topk={self.abs_topk}, md_decouple={self.md_decouple}{extra}"
+
+    def score_mask(self) -> torch.Tensor:
+        """The input-independent gain vector m (shape [dim]) for selection="scores".
+
+        Forward: exactly K nonzero entries, m_j = s_j for the K largest ranks
+        r_j (= |s_j| under abs_topk, else s_j). Backward: "hard" gives the exact
+        gradient (selected scores only, through the value they carry);
+        "laplace_ste" also differentiates the selection indicator 1[r_j >= theta]
+        as the Laplace CDF F_tau(r_j - theta), whose derivative is the Laplace pdf
+        exp(-|r_j - theta| / tau) / (2 tau); theta is the midpoint between the K-th
+        and (K+1)-th ranked scores and is treated as a constant.
+        """
+        assert self.scores is not None
+        s = self.scores
+        r = s.abs() if self.abs_topk else s
+        _, idx = r.detach().topk(self.k)
+        hard = torch.zeros_like(s).scatter_(0, idx, 1.0)
+        if self.score_grad == "laplace_ste" and self.k < self.dim:
+            ranked = r.detach().sort(descending=True).values
+            theta = 0.5 * (ranked[self.k - 1] + ranked[self.k])
+            u = r - theta
+            tau = self.score_temperature
+            soft = 0.5 + 0.5 * torch.sign(u) * (1.0 - torch.exp(-u.abs() / tau))  # Laplace CDF
+            gate = hard + (soft - soft.detach())
+        else:
+            gate = hard
+        return gate * s
 
     @torch.no_grad()
     def md_project_(self) -> None:
@@ -190,6 +235,8 @@ class TopKBottleneck(nn.Module):
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         """The sparse code: exactly K nonzero entries along the last dim."""
         z = self.encoder(x)
+        if self.selection == "scores":
+            return z * self.score_mask()
         scores = z.abs() if self.abs_topk else z
         _, idx = scores.topk(self.k, dim=-1)
         mask = torch.zeros_like(z).scatter_(-1, idx, 1.0)
@@ -275,6 +322,10 @@ def build_bottleneck(config: ModelConfig, block_idx: int) -> TopKBottleneck | No
         config.bottleneck_decoder_weight_variance,
         config.bottleneck_bias,
         config.bottleneck_md_decouple,
+        config.bottleneck_selection,
+        config.bottleneck_score_grad,
+        config.bottleneck_score_temperature,
+        config.bottleneck_score_init_std,
     )
 
 

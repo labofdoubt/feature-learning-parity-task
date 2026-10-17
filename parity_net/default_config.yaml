@@ -29,6 +29,10 @@ model:
   bottleneck_decoder_weight_variance: null
   bottleneck_bias: false
   bottleneck_md_decouple: false
+  bottleneck_selection: activation
+  bottleneck_score_grad: hard
+  bottleneck_score_temperature: 0.01
+  bottleneck_score_init_std: 0.01
   readout_before_bottleneck: false
 task:
   input_dim: 32

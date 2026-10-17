@@ -64,6 +64,31 @@ class ModelConfig:
     # c_F = sqrt(d_out d_in / N). The bottleneck group trains without weight decay
     # (the sphere is the regularizer); wd_bottleneck must stay unset / 0.
     bottleneck_md_decouple: bool = False
+    # How the K passing code entries are chosen.
+    #   "activation"  per input, the K largest (|z| or z) encoder outputs: an
+    #                 input-dependent gate that can mix Walsh modes.
+    #   "scores"      a learnable score vector s (one scalar per code entry, no
+    #                 input dependence): the K largest (|s| or s) entries pass on
+    #                 every input and are multiplied by their score, so the
+    #                 bottleneck is a pure filter W_dec diag(m) W_enc with exactly
+    #                 K nonzero gains m_j = s_j.
+    bottleneck_selection: Literal["activation", "scores"] = "activation"
+    # Gradient regime for the scores (bottleneck_selection="scores" only):
+    #   "hard"         exact gradient: only the K selected scores learn (through
+    #                  the value they multiply); the selection changes only when
+    #                  a selected score is overtaken.
+    #   "laplace_ste"  straight-through: hard mask in the forward, and in the
+    #                  backward the selection indicator 1[r_j >= theta] (theta =
+    #                  midpoint between the K-th and (K+1)-th ranked score) is
+    #                  differentiated as the Laplace CDF with scale
+    #                  bottleneck_score_temperature, i.e. every score within a
+    #                  few temperatures of the threshold gets gradient with weight
+    #                  exp(-|r_j - theta| / tau) / (2 tau).
+    bottleneck_score_grad: Literal["hard", "laplace_ste"] = "hard"
+    # tau of the Laplace surrogate, in score units (scores start at 1 +- init std).
+    bottleneck_score_temperature: float = 0.01
+    # Scores start at 1 + N(0, std^2): gains ~1 like a 0/1 mask, random ranking.
+    bottleneck_score_init_std: float = 0.01
     # True: readouts (final and layerwise) read the residual stream right after the
     # residual addition, before that block's bottleneck; the bottleneck output only
     # feeds the next block, so the last bottleneck is inert. False: readouts see the
@@ -96,6 +121,14 @@ class ModelConfig:
                 raise ValueError(
                     f"{name} has no effect under bottleneck_md_decouple=True (the MD init "
                     "draws N(0, 1/N) and projects to the c_F sphere); leave it null")
+        if self.bottleneck_selection not in ("activation", "scores"):
+            raise ValueError(f"bottleneck_selection must be 'activation' or 'scores', got {self.bottleneck_selection!r}")
+        if self.bottleneck_score_grad not in ("hard", "laplace_ste"):
+            raise ValueError(f"bottleneck_score_grad must be 'hard' or 'laplace_ste', got {self.bottleneck_score_grad!r}")
+        if self.bottleneck_score_grad == "laplace_ste" and self.bottleneck_score_temperature <= 0:
+            raise ValueError("bottleneck_score_temperature must be positive for laplace_ste")
+        if self.bottleneck_score_init_std < 0:
+            raise ValueError("bottleneck_score_init_std must be non-negative")
         return ks
 
 
