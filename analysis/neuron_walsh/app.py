@@ -187,7 +187,7 @@ def mode_noise_threshold(ref_var: np.ndarray, abs_floor: float, mult: float) -> 
 
 
 def neuron_order(kind: str, ref_C: np.ndarray, ref_var: np.ndarray,
-                 hd_floor: float = 1e-8, hd_mult: float = 10.0) -> np.ndarray:
+                 hd_floor: float = 1e-6, hd_mult: float = 10.0) -> np.ndarray:
     """Overview ordering. Groups follow hierarchy order (d2_0..d2_7, d4_*, ...);
     inside a group neurons sort by the power of their group mode."""
     rP = ref_C ** 2
@@ -219,10 +219,10 @@ with tabs[0]:
                               key="drop_lowvar")
     var_exp = c3.slider("variance threshold: 10^", -6.0, 0.0, -4.0, step=0.1,
                         key="var_exp", disabled=not drop_lowvar)
-    hd_floor, hd_mult = 1e-8, 10.0
+    hd_floor, hd_mult = 1e-6, 10.0
     if n_sort == "highest-degree mode produced":
         h1, h2 = st.columns(2)
-        hd_floor = h1.number_input("produced-mode floor: min a² (absolute)", value=1e-8,
+        hd_floor = h1.number_input("produced-mode floor: min a² (absolute)", value=1e-6,
                                    format="%.1e", key="hd_floor")
         hd_mult = h2.number_input("produced-mode floor: × sampling noise σ²/n", value=10.0,
                                   min_value=0.0, step=1.0, key="hd_mult")
@@ -310,7 +310,7 @@ with tabs[1]:
             grp = dom
         else:
             r1, r2 = st.columns(2)
-            iw_floor = r1.number_input("produced-mode floor: min a² (absolute)", value=1e-8,
+            iw_floor = r1.number_input("produced-mode floor: min a² (absolute)", value=1e-6,
                                        format="%.1e", key="iw_hd_floor")
             iw_mult = r2.number_input("produced-mode floor: × sampling noise σ²/n", value=10.0,
                                       min_value=0.0, step=1.0, key="iw_hd_mult")
