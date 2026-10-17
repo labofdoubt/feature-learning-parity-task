@@ -6,14 +6,14 @@ model:
   activation: silu
   activation_scale: 1.0
   use_readout_barrier: true
-  embedding_weight_variance:
+  embedding_weight_variance: null
   freeze_embedding: true
   hidden_weight_variance: 1.0
   readout_weight_variance: 0.0001
   use_layerwise_readouts: false
   use_post_activation_linear: false
   use_skip_connections: true
-  post_activation_linear_variance:
+  post_activation_linear_variance: null
   bias: false
   use_attention: false
   sequence_mixing: attention
@@ -21,12 +21,21 @@ model:
   attention_logit_scale: 1/sqrt(d)
   autoregressive_feedback: raw
   use_kv_cache: true
+  use_bottleneck: false
+  bottleneck_dim: null
+  bottleneck_k: null
+  bottleneck_abs_topk: true
+  bottleneck_encoder_weight_variance: null
+  bottleneck_decoder_weight_variance: null
+  bottleneck_bias: false
 task:
   input_dim: 32
   relevant_dim: 16
   exclude_targets: []
   data_rho: 0.0
   data_distribution: hierarchical
+  data_walsh_mode: null
+  data_walsh_clusters: null
   eval_noise_repeats: 2
   train_only_root: false
   task_type: tree_parity
@@ -34,7 +43,7 @@ task:
 training:
   num_steps: 10000
   test_samples: 20000
-  train_samples:
+  train_samples: null
   batch_size: 512
   seed: 0
   device: auto
@@ -42,8 +51,9 @@ training:
   validate_every: 100
   progress_every: 0
   checkpoint_every: 1000
+  checkpoint_log_scale: false
   output_dir: runs/parity
-  barrier_c:
+  barrier_c: null
   barrier_lambda: 10.0
   matmul_precision: highest
   teacher_forcing_ratio: 1.0
@@ -52,13 +62,15 @@ training:
   optimizer:
     name: adamw
     lr: 0.001
-    lr_embedding:
-    lr_hidden:
-    lr_readout:
+    lr_embedding: null
+    lr_hidden: null
+    lr_readout: null
+    lr_bottleneck: null
     weight_decay: 0.0
-    wd_embedding:
-    wd_hidden:
-    wd_readout:
+    wd_embedding: null
+    wd_hidden: null
+    wd_readout: null
+    wd_bottleneck: null
     momentum: 0.0
     betas:
     - 0.9

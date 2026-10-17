@@ -93,6 +93,25 @@ always follows `hidden_weight_variance` — and the field is ignored entirely wh
 the attention model's blocks reuse the same MLP. Note that `W` is a hidden weight
 for muP purposes, so a width-independent value here breaks the `1/fan_in` rule.
 
+Set `use_bottleneck` to `true` to insert a sparse bottleneck on the residual
+stream after every block's residual addition: `h -> W_dec TopK(W_enc h)`, with
+`W_enc: N -> bottleneck_dim` and `W_dec: bottleneck_dim -> N`. There is one
+bottleneck per block, so exactly `L` of them, matching the number of
+nonlinearities (under `use_attention` only the MLP residual addition of each
+block gets one, not the sequence-mixing one). `bottleneck_k` is the number of
+active code entries per sample, either a single int shared by all `L`
+bottlenecks or a list of `L` ints, one per block. `bottleneck_abs_topk: true`
+keeps the `K` entries of largest magnitude (either sign); `false` keeps the `K`
+largest signed entries with no ReLU. `bottleneck_encoder_weight_variance` and
+`bottleneck_decoder_weight_variance` are per-entry init variances; leave them
+`null` for `1/N` (encoder) and `1/K` (decoder, per block), which roughly
+preserves the residual-stream scale at init. `bottleneck_bias` adds biases to
+the two linears independently of `bias`. Bottleneck weights form their own
+optimizer group with `lr_bottleneck` / `wd_bottleneck` (falling back to `lr` /
+`weight_decay`); they are not part of the `hidden` group. The residual stream
+returned by `return_activations=True` is the post-bottleneck stream, and
+`model.bottleneck_codes(x)` returns the sparse codes of every bottleneck.
+
 `TrainingConfig` controls `num_steps`, fresh-batch size, fixed held-out test
 set size, optimizer, checkpointing, and the readout barrier parameters.
 `validate_every` runs a full test evaluation and appends a row to `metrics.csv`;
@@ -105,7 +124,9 @@ and checkpoints written under the old name still load. The
 optimizer supports optional per-group learning rates: `lr_embedding`,
 `lr_hidden`, and `lr_readout`; any omitted value falls back to `lr`. It also
 supports optional per-group weight decays: `wd_embedding`, `wd_hidden`, and
-`wd_readout`; any omitted value falls back to `weight_decay`. Embedding-group
+`wd_readout`; any omitted value falls back to `weight_decay`. With
+`use_bottleneck`, `lr_bottleneck` and `wd_bottleneck` cover the bottleneck
+encoder/decoder group in the same way. Embedding-group
 optimizer settings are ignored when `freeze_embedding` leaves the embedding frozen.
 barrier coefficient `c` lives in the training config because it is a loss
 regularizer. If `barrier_c` is omitted, training uses `7 / N`, matching the

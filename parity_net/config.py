@@ -34,6 +34,51 @@ class ModelConfig:
     attention_logit_scale: Literal["1/sqrt(d)", "1/d"] = "1/sqrt(d)"
     autoregressive_feedback: Literal["raw", "sign"] = "raw"
     use_kv_cache: bool = True
+    # Optional sparse bottleneck on the residual stream. When enabled, every block
+    # ends with  h -> W_dec TopK(W_enc h)  applied right after its residual addition
+    # (under use_attention only the MLP residual addition gets one), so there are
+    # exactly L bottlenecks, one per nonlinearity.
+    use_bottleneck: bool = False
+    # Width of the bottleneck code (d_bottleneck). Required when use_bottleneck.
+    bottleneck_dim: int | None = None
+    # Number of active code entries per sample: one int shared by every bottleneck,
+    # or a list of L ints, one per block. Required when use_bottleneck.
+    bottleneck_k: int | list[int] | None = None
+    # True keeps the K largest |code| entries (either sign); False keeps the K
+    # largest signed entries, with no ReLU applied.
+    bottleneck_abs_topk: bool = True
+    # Per-entry init variances of the encoder (N -> d_bottleneck) and decoder
+    # (d_bottleneck -> N) weights. None means 1/N for the encoder and 1/K for the
+    # decoder (per block, using that block's K), which keeps the residual-stream
+    # scale roughly unchanged at init.
+    bottleneck_encoder_weight_variance: float | None = None
+    bottleneck_decoder_weight_variance: float | None = None
+    # Whether the encoder and decoder linears carry biases (independent of `bias`).
+    bottleneck_bias: bool = False
+
+    def bottleneck_ks(self) -> list[int]:
+        """Per-block K list, validating the bottleneck fields. Empty when disabled."""
+        if not self.use_bottleneck:
+            return []
+        if self.bottleneck_dim is None or self.bottleneck_dim <= 0:
+            raise ValueError("bottleneck_dim must be a positive int when use_bottleneck=True")
+        if self.bottleneck_k is None:
+            raise ValueError("bottleneck_k must be set when use_bottleneck=True")
+        ks = [self.bottleneck_k] * self.L if isinstance(self.bottleneck_k, int) else list(self.bottleneck_k)
+        if len(ks) != self.L:
+            raise ValueError(
+                f"bottleneck_k must be an int or a list of L={self.L} ints, got {self.bottleneck_k!r}"
+            )
+        for k in ks:
+            if not isinstance(k, int) or k <= 0 or k > self.bottleneck_dim:
+                raise ValueError(
+                    f"each bottleneck_k must be an int in [1, bottleneck_dim={self.bottleneck_dim}], got {k!r}"
+                )
+        for name in ("bottleneck_encoder_weight_variance", "bottleneck_decoder_weight_variance"):
+            value = getattr(self, name)
+            if value is not None and value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        return ks
 
 
 @dataclass
@@ -93,10 +138,13 @@ class OptimizerConfig:
     lr_embedding: float | None = None
     lr_hidden: float | None = None
     lr_readout: float | None = None
+    # Bottleneck encoder/decoder weights form their own group (not "hidden").
+    lr_bottleneck: float | None = None
     weight_decay: float = 0.0
     wd_embedding: float | None = None
     wd_hidden: float | None = None
     wd_readout: float | None = None
+    wd_bottleneck: float | None = None
     momentum: float = 0.0
     betas: tuple[float, float] = (0.9, 0.999)
 

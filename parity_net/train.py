@@ -126,7 +126,8 @@ def build_optimizer(model: ParityModel, config: OptimizerConfig) -> torch.optim.
     param_groups = []
     group_specs = [
         ("embedding", model.embedding.parameters(), config.lr_embedding, config.wd_embedding),
-        ("hidden", model.blocks.parameters(), config.lr_hidden, config.wd_hidden),
+        ("hidden", model.hidden_parameters(), config.lr_hidden, config.wd_hidden),
+        ("bottleneck", model.bottleneck_parameters(), config.lr_bottleneck, config.wd_bottleneck),
         ("readout", model.readout_parameters(), config.lr_readout, config.wd_readout),
     ]
     for name, params, group_lr, group_wd in group_specs:

@@ -75,6 +75,63 @@ def scaled_embedding(input_dim: int, N: int, variance: float | None) -> torch.Te
     return embedding * math.sqrt(N * variance)
 
 
+class TopKBottleneck(nn.Module):
+    """Sparse bottleneck on the residual stream: h -> W_dec TopK(W_enc h).
+
+    `abs_topk=True` keeps the K entries of largest magnitude (either sign); False
+    keeps the K largest signed entries, with no ReLU. The kept entries pass their
+    value (and gradient) through unchanged; the rest are zeroed.
+    """
+
+    def __init__(
+        self,
+        width: int,
+        dim: int,
+        k: int,
+        abs_topk: bool,
+        encoder_variance: float | None,
+        decoder_variance: float | None,
+        bias: bool,
+    ) -> None:
+        super().__init__()
+        if dim <= 0 or k <= 0 or k > dim:
+            raise ValueError(f"Need 1 <= k <= dim, got k={k}, dim={dim}")
+        self.dim = dim
+        self.k = k
+        self.abs_topk = abs_topk
+        self.encoder = nn.Linear(width, dim, bias=bias)
+        self.decoder = nn.Linear(dim, width, bias=bias)
+        # None: 1/fan_in for the encoder; 1/K for the decoder, since only K of the
+        # d_bottleneck code entries are nonzero, so this keeps ||h|| roughly fixed.
+        enc_var = 1.0 / width if encoder_variance is None else encoder_variance
+        dec_var = 1.0 / k if decoder_variance is None else decoder_variance
+        nn.init.normal_(self.encoder.weight, mean=0.0, std=math.sqrt(enc_var))
+        nn.init.normal_(self.decoder.weight, mean=0.0, std=math.sqrt(dec_var))
+        for linear in (self.encoder, self.decoder):
+            if linear.bias is not None:
+                nn.init.zeros_(linear.bias)
+        # Analysis side-channel: when True, forward() stores the sparse code tensor.
+        self.record_codes = False
+        self.last_codes: torch.Tensor | None = None
+
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}, k={self.k}, abs_topk={self.abs_topk}"
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        """The sparse code: exactly K nonzero entries along the last dim."""
+        z = self.encoder(x)
+        scores = z.abs() if self.abs_topk else z
+        _, idx = scores.topk(self.k, dim=-1)
+        mask = torch.zeros_like(z).scatter_(-1, idx, 1.0)
+        return z * mask
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        codes = self.encode(x)
+        if self.record_codes:
+            self.last_codes = codes
+        return self.decoder(codes)
+
+
 class ResidualBlock(nn.Module):
     def __init__(
         self,
@@ -86,9 +143,12 @@ class ResidualBlock(nn.Module):
         post_activation_linear_variance: float | None = None,
         activation_scale: float = 1.0,
         use_skip_connection: bool = True,
+        bottleneck: TopKBottleneck | None = None,
     ) -> None:
         super().__init__()
         self.use_skip_connection = use_skip_connection
+        # Applied to the residual stream after this block's residual addition.
+        self.bottleneck = bottleneck
         self.linear = nn.Linear(width, width, bias=bias)
         self.activation = activation_from_name(activation, activation_scale)
         self.post_activation_linear = (
@@ -123,10 +183,85 @@ class ResidualBlock(nn.Module):
         if self.post_activation_linear is not None:
             update = self.post_activation_linear(update)
         # Without the skip connection the block is a plain MLP layer, not a residual one.
-        return x + update if self.use_skip_connection else update
+        h = x + update if self.use_skip_connection else update
+        if self.bottleneck is not None:
+            h = self.bottleneck(h)
+        return h
 
 
-class ParityResidualNet(nn.Module):
+def build_bottleneck(config: ModelConfig, block_idx: int) -> TopKBottleneck | None:
+    """The bottleneck that follows block `block_idx`, or None when disabled."""
+    ks = config.bottleneck_ks()
+    if not ks:
+        return None
+    assert config.bottleneck_dim is not None
+    return TopKBottleneck(
+        config.N,
+        config.bottleneck_dim,
+        ks[block_idx],
+        config.bottleneck_abs_topk,
+        config.bottleneck_encoder_weight_variance,
+        config.bottleneck_decoder_weight_variance,
+        config.bottleneck_bias,
+    )
+
+
+class BottleneckMixin:
+    """Parameter-group and analysis helpers shared by both architectures.
+
+    Requires `self.blocks` whose entries expose a `.bottleneck` attribute
+    (ResidualBlock directly, TransformerBlock via its mlp).
+    """
+
+    def bottleneck_modules(self) -> list[TopKBottleneck]:
+        modules = []
+        for block in self.blocks:  # type: ignore[attr-defined]
+            bottleneck = getattr(block, "bottleneck", None)
+            if bottleneck is not None:
+                modules.append(bottleneck)
+        return modules
+
+    def bottleneck_parameters(self):
+        for bottleneck in self.bottleneck_modules():
+            yield from bottleneck.parameters()
+
+    def hidden_parameters(self):
+        """Every block parameter except the bottleneck encoders/decoders."""
+        excluded = {id(p) for p in self.bottleneck_parameters()}
+        for p in self.blocks.parameters():  # type: ignore[attr-defined]
+            if id(p) not in excluded:
+                yield p
+
+    @torch.no_grad()
+    def bottleneck_codes(self, x: torch.Tensor, **forward_kwargs) -> list[torch.Tensor]:
+        """Sparse codes of every bottleneck for inputs `x`, in block order."""
+        modules = self.bottleneck_modules()
+        for m in modules:
+            m.record_codes = True
+        try:
+            self(x, **forward_kwargs)  # type: ignore[operator]
+            codes = [m.last_codes for m in modules]
+        finally:
+            for m in modules:
+                m.record_codes = False
+                m.last_codes = None
+        return [c for c in codes if c is not None]
+
+    def _bottleneck_weight_variances(self, prefix: str) -> dict[str, float]:
+        variances = {}
+        for i, block in enumerate(self.blocks):  # type: ignore[attr-defined]
+            bottleneck = getattr(block, "bottleneck", None)
+            if bottleneck is None:
+                continue
+            for name in ("encoder", "decoder"):
+                weight = getattr(bottleneck, name).weight
+                variances[f"blocks.{i}.{prefix}bottleneck.{name}.weight"] = (
+                    weight.detach().float().var(unbiased=False).item()
+                )
+        return variances
+
+
+class ParityResidualNet(BottleneckMixin, nn.Module):
     def __init__(
         self,
         config: ModelConfig,
@@ -161,8 +296,9 @@ class ParityResidualNet(nn.Module):
                     config.post_activation_linear_variance,
                     config.activation_scale,
                     config.use_skip_connections,
+                    build_bottleneck(config, block_idx),
                 )
-                for _ in range(config.L)
+                for block_idx in range(config.L)
             ]
         )
         self.readout = None
@@ -292,6 +428,7 @@ class ParityResidualNet(nn.Module):
                 variances[f"blocks.{i}.post_activation_linear.weight"] = (
                     block.post_activation_linear.weight.detach().float().var(unbiased=False).item()
                 )
+        variances.update(self._bottleneck_weight_variances(""))
         if self.config.use_layerwise_readouts:
             for block_idx, key in self.layerwise_readout_order:
                 variances[f"layerwise_readouts.block_{block_idx}.weight"] = (
@@ -493,6 +630,7 @@ class TransformerBlock(nn.Module):
         post_activation_linear_variance: float | None = None,
         activation_scale: float = 1.0,
         use_skip_connections: bool = True,
+        bottleneck: TopKBottleneck | None = None,
     ) -> None:
         super().__init__()
         self.use_skip_connections = use_skip_connections
@@ -508,7 +646,13 @@ class TransformerBlock(nn.Module):
             post_activation_linear_variance,
             activation_scale,
             use_skip_connections,
+            bottleneck,
         )
+
+    @property
+    def bottleneck(self) -> TopKBottleneck | None:
+        """The bottleneck after the MLP residual addition (none after the mixing one)."""
+        return self.mlp.bottleneck
 
     @property
     def attention(self) -> nn.Module | None:
@@ -531,7 +675,7 @@ class TransformerBlock(nn.Module):
         return self.mlp(x, activation_intervention=activation_intervention)
 
 
-class ParityTransformer(nn.Module):
+class ParityTransformer(BottleneckMixin, nn.Module):
     """Next-position parity prediction with causal attention.
 
     The sequence is the `input_dim` input bits followed by the target parities in
@@ -598,8 +742,9 @@ class ParityTransformer(nn.Module):
                     config.post_activation_linear_variance,
                     config.activation_scale,
                     config.use_skip_connections,
+                    build_bottleneck(config, block_idx),
                 )
-                for _ in range(config.L)
+                for block_idx in range(config.L)
             ]
         )
 
@@ -771,6 +916,7 @@ class ParityTransformer(nn.Module):
                 variances[f"blocks.{i}.mlp.post_activation_linear.weight"] = (
                     block.mlp.post_activation_linear.weight.detach().float().var(unbiased=False).item()
                 )
+        variances.update(self._bottleneck_weight_variances("mlp."))
         variances["readout.weight"] = self.readout.weight.detach().float().var(unbiased=False).item()
         return variances
 
