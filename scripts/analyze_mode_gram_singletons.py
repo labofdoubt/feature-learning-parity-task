@@ -38,6 +38,8 @@ def main() -> None:
     ap.add_argument("--checkpoint", default="final")
     ap.add_argument("--batch-size", type=int, default=4096)
     ap.add_argument("--cosine", action="store_true", help="plot the cosine-normalized Gram instead of raw dot products")
+    ap.add_argument("--log", action="store_true",
+                    help="symmetric log color scale (sign kept; linear below 1e-4 of the block max)")
     args = ap.parse_args()
     run_dir = Path(args.run_dir)
     device = resolve_device("auto")
@@ -73,14 +75,21 @@ def main() -> None:
         else:
             lim = float(np.abs(gram).max())
             shown, kind = gram, "raw Gram (dot products)"
-            im = ax.imshow(shown, cmap="RdBu_r", vmin=-lim, vmax=lim)
+            if args.log:
+                from matplotlib.colors import SymLogNorm
+                kind += ", symlog"
+                im = ax.imshow(shown, cmap="RdBu_r",
+                               norm=SymLogNorm(linthresh=lim * 1e-4, vmin=-lim, vmax=lim))
+            else:
+                im = ax.imshow(shown, cmap="RdBu_r", vmin=-lim, vmax=lim)
         ax.set_xticks(range(len(names))); ax.set_xticklabels(names, rotation=90, fontsize=7)
         ax.set_yticks(range(len(names))); ax.set_yticklabels(names, fontsize=7)
         ax.set_title(f"after residual addition {b + 1} (block {b})  {kind}")
         fig.colorbar(im, ax=ax, fraction=0.046)
     fig.suptitle(f"{run_dir.name} @ step {step}: Gram of mode directions v_S = E[h χ_S], tree modes + singletons")
     fig.tight_layout()
-    fname = "mode_gram_singletons_cosine.png" if args.cosine else "mode_gram_singletons.png"
+    fname = ("mode_gram_singletons_cosine.png" if args.cosine
+             else "mode_gram_singletons_log.png" if args.log else "mode_gram_singletons.png")
     fig.savefig(out / fname, dpi=130)
     print(out / fname)
 
