@@ -55,6 +55,11 @@ class ModelConfig:
     bottleneck_decoder_weight_variance: float | None = None
     # Whether the encoder and decoder linears carry biases (independent of `bias`).
     bottleneck_bias: bool = False
+    # True: readouts (final and layerwise) read the residual stream right after the
+    # residual addition, before that block's bottleneck; the bottleneck output only
+    # feeds the next block, so the last bottleneck is inert. False: readouts see the
+    # post-bottleneck stream. Residual-net only.
+    readout_before_bottleneck: bool = False
 
     def bottleneck_ks(self) -> list[int]:
         """Per-block K list, validating the bottleneck fields. Empty when disabled."""

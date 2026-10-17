@@ -175,5 +175,35 @@ def test_state_dict_round_trip():
     assert torch.allclose(a(x), b(x))
 
 
+def test_readout_before_bottleneck():
+    torch.manual_seed(0)
+    config = _config(bottleneck_k=[2, 2, 2], readout_before_bottleneck=True, use_layerwise_readouts=True)
+    names = ["d2_0", "d2_1", "d4_0"]
+    model = build_model(config, output_dim=3, target_names_=names)
+    x = torch.randint(0, 2, (6, 8)).float() * 2 - 1
+    y, acts = model(x, return_activations=True)
+    assert y.shape == (6, 3)
+    # Recorded streams are pre-bottleneck: block 0's output without its bottleneck.
+    h1_pre = model.blocks[0](acts[0], apply_bottleneck=False)
+    assert torch.allclose(acts[1], h1_pre)
+    # Block 1 receives the post-bottleneck stream.
+    h2_pre = model.blocks[1](model.blocks[0].bottleneck(h1_pre), apply_bottleneck=False)
+    assert torch.allclose(acts[2], h2_pre)
+    # Layerwise readouts read the pre-bottleneck stream.
+    expected = torch.cat([model.layerwise_readouts["0"](acts[1]), model.layerwise_readouts["1"](acts[2])], dim=1)
+    assert torch.allclose(y, expected)
+    # The last bottleneck gets no gradient; the others do.
+    y.square().sum().backward()
+    assert model.blocks[2].bottleneck.encoder.weight.grad is None
+    assert model.blocks[0].bottleneck.encoder.weight.grad.abs().sum() > 0
+    # Same with a single final readout: it reads before the last bottleneck.
+    single = build_model(_config(bottleneck_k=[2, 2, 2], readout_before_bottleneck=True), output_dim=3)
+    y_single, acts_single = single(x, return_activations=True)
+    assert torch.allclose(y_single, single.readout(acts_single[-1]))
+    assert torch.allclose(acts_single[-1], single.blocks[2](single.blocks[1].bottleneck(acts_single[2]), apply_bottleneck=False))
+    with pytest.raises(ValueError):
+        build_model(_config(use_attention=True, readout_before_bottleneck=True), output_dim=3)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

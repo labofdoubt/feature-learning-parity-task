@@ -176,6 +176,7 @@ class ResidualBlock(nn.Module):
         x: torch.Tensor,
         *,
         activation_intervention: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        apply_bottleneck: bool = True,
     ) -> torch.Tensor:
         update = self.activation(self.linear(x))
         if activation_intervention is not None:
@@ -184,7 +185,7 @@ class ResidualBlock(nn.Module):
             update = self.post_activation_linear(update)
         # Without the skip connection the block is a plain MLP layer, not a residual one.
         h = x + update if self.use_skip_connection else update
-        if self.bottleneck is not None:
+        if apply_bottleneck and self.bottleneck is not None:
             h = self.bottleneck(h)
         return h
 
@@ -357,7 +358,16 @@ class ParityResidualNet(BottleneckMixin, nn.Module):
             activation_intervention = None
             if block_intervention is not None and layer_idx == block_intervention[0]:
                 activation_intervention = block_intervention[1]
-            h = block(h, activation_intervention=activation_intervention)
+            # The recorded residual stream, the intervention point, and the readouts
+            # all use the same tensor: pre-bottleneck when readout_before_bottleneck,
+            # else post-bottleneck. The next block always receives the post-bottleneck
+            # stream.
+            before = self.config.readout_before_bottleneck
+            h = block(
+                h,
+                activation_intervention=activation_intervention,
+                apply_bottleneck=not before,
+            )
             residual_stream_idx = layer_idx + 1
             if intervention is not None and intervention[0] == residual_stream_idx:
                 h = intervention[1](h)
@@ -370,11 +380,13 @@ class ParityResidualNet(BottleneckMixin, nn.Module):
                 _, key = self.layerwise_readout_order[next_readout_idx]
                 layerwise_outputs.append(self.layerwise_readouts[key](h))
                 next_readout_idx += 1
+            if before and block.bottleneck is not None:
+                h = block.bottleneck(h)
         if self.config.use_layerwise_readouts:
             y = torch.cat(layerwise_outputs, dim=1)
         else:
             assert self.readout is not None
-            y = self.readout(h)
+            y = self.readout(activations[-1])
         if return_activations:
             return y, activations
         return y
@@ -699,6 +711,8 @@ class ParityTransformer(BottleneckMixin, nn.Module):
         super().__init__()
         if config.use_layerwise_readouts:
             raise ValueError("use_layerwise_readouts is not supported with use_attention=True")
+        if config.readout_before_bottleneck:
+            raise ValueError("readout_before_bottleneck is not supported with use_attention=True")
         if output_dim < 1:
             raise ValueError("output_dim must be positive")
         if config.sequence_mixing == "none" and output_dim > 1:
