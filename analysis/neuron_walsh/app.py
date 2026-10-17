@@ -95,6 +95,22 @@ def load_input_walsh(root: str, run: str, step: int) -> dict | None:
                 blocks=blocks)
 
 
+@st.cache_data(show_spinner="loading bottleneck-Walsh artifact...", max_entries=8)
+def load_bottleneck_walsh(root: str, run: str, step: int) -> dict | None:
+    """Optional bottleneck code analysis (analysis.neuron_walsh.bottleneck_walsh)."""
+    p = (Path(root) / run / "analysis" / "neuron_walsh" / "bottleneck_walsh"
+         / f"step_{step:08d}.pt")
+    if not p.exists():
+        return None
+    raw = torch.load(p, map_location="cpu", weights_only=False)
+    bns = {}
+    for b in raw["bottlenecks"]:
+        bns[b["block"]] = {k: (v.numpy().astype(np.float64) if hasattr(v, "numpy") else v)
+                           for k, v in b.items()}
+    return dict(step=raw["step"], num_samples=raw["num_samples"], modes=raw["modes"],
+                bottlenecks=bns)
+
+
 @st.cache_data(show_spinner="scanning steps for y-range...")
 def mode_rank_extremes(root: str, run: str, loc_name: str, mode_reg_idx: int,
                        topn: int) -> tuple[float, float]:
@@ -211,9 +227,9 @@ def neuron_order(kind: str, ref_C: np.ndarray, ref_var: np.ndarray,
     return np.lexsort((-rP[g, np.arange(N)], g))
 
 
-tabs = st.tabs(["Overview", "Input Walsh", "Mode view", "Neuron view",
-                "Layer population", "Mode interactions", "Training dynamics",
-                "Hierarchy"])
+tabs = st.tabs(["Overview", "Input Walsh", "Bottleneck Walsh", "Mode view",
+                "Neuron view", "Layer population", "Mode interactions",
+                "Training dynamics", "Hierarchy"])
 
 # ── Overview: neuron x mode heatmap ──────────────────────────────────────────
 with tabs[0]:
@@ -405,8 +421,128 @@ with tabs[1]:
                                margin=dict(l=10, r=10, t=20, b=10))
             st.plotly_chart(fdeg, use_container_width=True)
 
-# ── Mode view ────────────────────────────────────────────────────────────────
+# ── Bottleneck Walsh: code neurons and what passes through ───────────────────
 with tabs[2]:
+    bw_all = load_bottleneck_walsh(str(RUNS_ROOT), run, step)
+    if bw_all is None:
+        st.info("No bottleneck-Walsh artifact for this step (only bottleneck models have "
+                "one). Compute it with\n\n"
+                f"`python -m analysis.neuron_walsh.bottleneck_walsh --run {run}`")
+    else:
+        bw_blocks = sorted(bw_all["bottlenecks"])
+        bw_modes_all = bw_all["modes"]
+        c1, c2, c3 = st.columns([1, 2, 2])
+        bw_block = c1.selectbox("Bottleneck (after block)", bw_blocks,
+                                index=bw_blocks.index(loc["block"]) if loc["block"] in bw_blocks else 0,
+                                key="bw_block")
+        stage = c2.radio("Stage", ["pre-TopK (every code neuron)",
+                                   "post-TopK (what passes through)"],
+                         horizontal=True, key="bw_stage")
+        bw_degrees = c3.multiselect("Mode degrees", sorted({m["degree"] for m in bw_modes_all}),
+                                    default=sorted({m["degree"] for m in bw_modes_all}),
+                                    key="bw_degrees")
+        bw = bw_all["bottlenecks"][bw_block]
+        bw_sel = [m for m in bw_modes_all if m["degree"] in bw_degrees]
+        if not bw_sel:
+            st.warning("select at least one degree")
+            st.stop()
+        bw_idx = np.array([m["index"] for m in bw_sel])
+        bw_names = [m["name"] for m in bw_sel]
+        bw_degs = np.array([m["degree"] for m in bw_sel])
+        pre = stage.startswith("pre")
+        Cb = (bw["C_pre"] if pre else bw["C_post"])[bw_idx]          # [M, d]
+        varb = bw["var_pre"] if pre else bw["var_post"]
+        freq = bw["select_freq"]
+        d_b = Cb.shape[1]
+        Pb = Cb ** 2
+        totb = Pb.sum(0)
+
+        c4, c5, c6, c7 = st.columns([2, 1, 1, 1])
+        bw_sort = c4.selectbox("Neuron sorting", [
+            "highest-degree mode produced", "dominant mode", "selection frequency",
+            "original neuron index"], key="bw_sort")
+        keep_n = c5.number_input("keep most active (0 = all)", 0, d_b, 64, step=8,
+                                 key="bw_keep")
+        bw_floor = c6.number_input("produced-mode floor: min a²", value=1e-6, format="%.1e",
+                                   key="bw_floor")
+        bw_mult = c7.number_input("× sampling noise σ²/n", value=10.0, min_value=0.0,
+                                  step=1.0, key="bw_mult")
+        keep = np.argsort(-freq)[:int(keep_n)] if keep_n > 0 else np.arange(d_b)
+        keep = np.sort(keep)
+        if bw_sort == "original neuron index":
+            nordb = keep
+        elif bw_sort == "selection frequency":
+            nordb = keep[np.argsort(-freq[keep])]
+        else:
+            if bw_sort == "dominant mode":
+                g = Pb.argmax(0)
+            else:
+                thr = np.maximum(bw_floor, bw_mult * varb / max(1, bw_all["num_samples"]))
+                g = M.highest_degree_mode(Cb, bw_degs, thr)
+            nordb = keep[np.lexsort((-Pb[g[keep], keep], g[keep]))]
+        gdom = Pb.argmax(0)
+
+        if rep == "Power |a|^2":
+            Zb, zl = Pb, "power"
+        elif rep == "Raw signed coefficient":
+            Zb, zl = Cb, "a"
+        elif rep == "Absolute coefficient":
+            Zb, zl = np.abs(Cb), "|a|"
+        else:
+            Zb, zl = Pb / (totb[None, :] + 1e-30), "p(S|j)"
+        cdb = np.stack([nordb.astype(float), freq[nordb], totb[nordb],
+                        varb[nordb]], axis=-1)[None, :, :].repeat(len(bw_sel), 0)
+        fig = go.Figure(go.Heatmap(
+            z=Zb[:, nordb], y=bw_names, x=np.arange(len(nordb)), customdata=cdb,
+            hovertemplate=("code neuron %{customdata[0]:.0f}<br>mode %{y}<br>" + zl +
+                           " %{z:.3e}<br>selected %{customdata[1]:.3f} of inputs · "
+                           "tracked power %{customdata[2]:.3e} · var %{customdata[3]:.3e}"),
+            colorscale="Viridis", colorbar=dict(title=zl)))
+        fig.update_layout(height=max(420, 90 + 22 * len(bw_sel)),
+                          margin=dict(l=10, r=10, t=25, b=10),
+                          xaxis_title="code neuron (sorted position — hover for id)",
+                          yaxis_title="mode")
+        st.plotly_chart(fig, use_container_width=True)
+        n_active = int((freq > 0).sum())
+        st.caption(
+            f"bottleneck after block {bw_block} (d={bw['dim']}, K={bw['k']}, "
+            f"{'Abs' if bw['abs_topk'] else 'signed '}TopK) @ step {step}: "
+            f"{len(nordb)}/{d_b} code neurons shown ({n_active} are ever selected, "
+            f"{int((freq > 0.01).sum())} on >1% of inputs). Coefficients of the "
+            f"{'encoder output before TopK' if pre else 'sparse code after TopK'} on "
+            f"{len(bw_sel)} tracked modes, uniform data. Sorting: as in Overview, over the "
+            f"stage shown; 'keep most active' ranks by selection frequency first.")
+
+        # what passes through: per-mode power of pre / post codes and of the decoder output
+        with st.expander("modes passed through this bottleneck (layer-level Walsh power)",
+                         expanded=True):
+            pre_pow = (bw["C_pre"][bw_idx] ** 2).sum(1)
+            post_pow = (bw["C_post"][bw_idx] ** 2).sum(1)
+            out_pow = bw["output_power"][bw_idx]
+            fp = go.Figure()
+            fp.add_bar(x=bw_names, y=pre_pow, name="Σ_j a² pre-TopK")
+            fp.add_bar(x=bw_names, y=post_pow, name="Σ_j a² post-TopK")
+            fp.add_bar(x=bw_names, y=out_pow, name="decoder output H(S)")
+            fp.update_layout(barmode="group", height=320, yaxis_type="log",
+                             margin=dict(l=10, r=10, t=20, b=10), yaxis_title="power")
+            st.plotly_chart(fp, use_container_width=True)
+            st.caption("decoder output H(S) = ‖E[W_dec·code · χ_S]‖² is what the next block "
+                       "receives from this bottleneck; pre/post sums are over code neurons.")
+
+        with st.expander("kept code neurons (table)"):
+            table = [dict(code_neuron=int(j), select_freq=float(freq[j]),
+                          dominant_mode=bw_names[gdom[j]], dominant_power=float(Pb[gdom[j], j]),
+                          tracked_power=float(totb[j]), variance=float(varb[j]))
+                     for j in nordb]
+            st.dataframe(table, use_container_width=True,
+                         column_config={
+                             "select_freq": st.column_config.NumberColumn(format="%.3f"),
+                             "dominant_power": st.column_config.NumberColumn(format="%.3e"),
+                             "tracked_power": st.column_config.NumberColumn(format="%.3e"),
+                             "variance": st.column_config.NumberColumn(format="%.3e")})
+
+# ── Mode view ────────────────────────────────────────────────────────────────
+with tabs[3]:
     sel_mode = st.selectbox("Mode", mode_names, key="sel_mode")
     mi = mode_names.index(sel_mode)
     md = mode_sel[mi]
@@ -442,7 +578,7 @@ with tabs[2]:
     st.plotly_chart(f3, use_container_width=True)
 
 # ── Neuron view ──────────────────────────────────────────────────────────────
-with tabs[3]:
+with tabs[4]:
     ni = int(st.number_input("Neuron", 0, N - 1, key="sel_neuron"))
     cols = st.columns(5)
     flags = " ⚠ insufficient tracked-mode power" if low_power[ni] else ""
@@ -469,7 +605,7 @@ with tabs[3]:
     st.plotly_chart(f, use_container_width=True)
 
 # ── Layer population ─────────────────────────────────────────────────────────
-with tabs[4]:
+with tabs[5]:
     ax_opts = {"M_eff": meff, "purity": pur, "coverage": cov,
                "total tracked power": tot_i,
                "max |correlation|": np.abs(R).max(0),
@@ -513,7 +649,7 @@ with tabs[4]:
     c4.plotly_chart(h, use_container_width=True)
 
 # ── Mode interactions ────────────────────────────────────────────────────────
-with tabs[5]:
+with tabs[6]:
     signed = st.toggle("Signed coefficient alignment (default: power co-localization)")
     K = M.mode_colocalization(C, signed=signed)
     f = go.Figure(go.Heatmap(z=K, x=mode_names, y=mode_names,
@@ -526,7 +662,7 @@ with tabs[5]:
     st.plotly_chart(f, use_container_width=True)
 
 # ── Training dynamics ────────────────────────────────────────────────────────
-with tabs[6]:
+with tabs[7]:
     sel_mode = st.selectbox("Mode (trajectory)", mode_names,
                             index=mode_names.index(st.session_state.sel_mode),
                             key="traj_mode")
@@ -564,7 +700,7 @@ with tabs[6]:
     c2.plotly_chart(f2, use_container_width=True)
 
 # ── Hierarchy ────────────────────────────────────────────────────────────────
-with tabs[7]:
+with tabs[8]:
     xs, ys, sizes, texts, hovers = [], [], [], [], []
     ex, ey = [], []
     pos = {}
