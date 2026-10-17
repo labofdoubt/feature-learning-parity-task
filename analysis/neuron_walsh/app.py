@@ -304,7 +304,7 @@ with tabs[1]:
                 "χ_{" + ",".join(map(str, bits)) + "}"
 
         # group = OUTPUT mode (same C / degree filter as the sidebar), by either rule
-        rule = st.radio("Grouping rule", ["dominant mode", "highest-degree mode produced"],
+        rule = st.radio("Grouping rule", ["highest-degree mode produced", "dominant mode"],
                         horizontal=True, key="iw_rule")
         if rule == "dominant mode":
             grp = dom
