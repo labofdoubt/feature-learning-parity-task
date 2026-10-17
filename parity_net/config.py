@@ -84,8 +84,16 @@ class ModelConfig:
     #                  bottleneck_score_temperature, i.e. every score within a
     #                  few temperatures of the threshold gets gradient with weight
     #                  exp(-|r_j - theta| / tau) / (2 tau).
-    bottleneck_score_grad: Literal["hard", "laplace_ste"] = "hard"
-    # tau of the Laplace surrogate, in score units (scores start at 1 +- init std).
+    #   "gumbel"       Gumbel-TopK: in training mode the ranks are perturbed once
+    #                  per forward by tau * Gumbel(0, 1) noise (shared across the
+    #                  batch, so the mask is still input-independent) before the
+    #                  hard top-K, and the kept scores get the exact gradient as
+    #                  in "hard". The noise lets currently dropped channels be
+    #                  selected and trained; in eval mode the selection is the
+    #                  deterministic top-K.
+    bottleneck_score_grad: Literal["hard", "laplace_ste", "gumbel"] = "hard"
+    # tau, in score units (scores start at 1 +- init std): the Laplace surrogate's
+    # scale under laplace_ste, the Gumbel noise magnitude under gumbel.
     bottleneck_score_temperature: float = 0.01
     # Scores start at 1 + N(0, std^2): gains ~1 like a 0/1 mask, random ranking.
     bottleneck_score_init_std: float = 0.01
@@ -123,10 +131,11 @@ class ModelConfig:
                     "draws N(0, 1/N) and projects to the c_F sphere); leave it null")
         if self.bottleneck_selection not in ("activation", "scores"):
             raise ValueError(f"bottleneck_selection must be 'activation' or 'scores', got {self.bottleneck_selection!r}")
-        if self.bottleneck_score_grad not in ("hard", "laplace_ste"):
-            raise ValueError(f"bottleneck_score_grad must be 'hard' or 'laplace_ste', got {self.bottleneck_score_grad!r}")
-        if self.bottleneck_score_grad == "laplace_ste" and self.bottleneck_score_temperature <= 0:
-            raise ValueError("bottleneck_score_temperature must be positive for laplace_ste")
+        if self.bottleneck_score_grad not in ("hard", "laplace_ste", "gumbel"):
+            raise ValueError(
+                f"bottleneck_score_grad must be 'hard', 'laplace_ste' or 'gumbel', got {self.bottleneck_score_grad!r}")
+        if self.bottleneck_score_grad in ("laplace_ste", "gumbel") and self.bottleneck_score_temperature <= 0:
+            raise ValueError(f"bottleneck_score_temperature must be positive for {self.bottleneck_score_grad}")
         if self.bottleneck_score_init_std < 0:
             raise ValueError("bottleneck_score_init_std must be non-negative")
         return ks

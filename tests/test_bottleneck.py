@@ -324,6 +324,31 @@ def test_score_selection_laplace_ste_gradient():
     assert torch.allclose(full.score_mask(), full.scores)
 
 
+def test_score_selection_gumbel():
+    torch.manual_seed(0)
+    b = TopKBottleneck(width=4, dim=50, k=5, abs_topk=True, encoder_variance=None, decoder_variance=None,
+                       bias=False, selection="scores", score_grad="gumbel", score_temperature=1.0)
+    b.train()
+    masks = [(b.score_mask() != 0).nonzero().flatten().tolist() for _ in range(20)]
+    assert all(len(m) == 5 for m in masks)                 # always exactly K
+    assert len({tuple(m) for m in masks}) > 1              # noise changes the selection
+    x = torch.randn(3, 4)
+    codes = b.encode(x)
+    assert torch.all((codes != 0).sum(-1) == 5)            # per-forward mask, shared across the batch
+    assert torch.equal((codes != 0)[0], (codes != 0)[1])
+    (b.score_mask() * torch.randn(50)).sum().backward()
+    assert int((b.scores.grad != 0).sum()) == 5            # exact gradient, kept scores only
+    b.eval()
+    det = set(b.scores.abs().topk(5).indices.tolist())
+    assert all(set((b.score_mask() != 0).nonzero().flatten().tolist()) == det for _ in range(5))
+    # tiny temperature in training mode reproduces the deterministic choice
+    b.score_temperature = 1e-6; b.train()
+    assert set((b.score_mask() != 0).nonzero().flatten().tolist()) == det
+    with pytest.raises(ValueError):
+        _config(bottleneck_selection="scores", bottleneck_score_grad="gumbel",
+                bottleneck_score_temperature=0.0).bottleneck_ks()
+
+
 def test_score_selection_model_config_and_training_step():
     torch.manual_seed(0)
     config = _config(bottleneck_k=[2, 2, 2], bottleneck_selection="scores",

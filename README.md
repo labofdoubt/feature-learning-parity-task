@@ -133,7 +133,13 @@ a selected score is overtaken); `laplace_ste` keeps the hard mask in the
 forward and differentiates the selection indicator as a Laplace CDF with scale
 `bottleneck_score_temperature` (in score units), so scores within a few
 temperatures of the threshold, the midpoint between the K-th and (K+1)-th
-ranked scores, also receive gradient weighted by the Laplace pdf. Scores start
+ranked scores, also receive gradient weighted by the Laplace pdf; `gumbel` is
+Gumbel-TopK, which in training mode adds `tau · Gumbel(0,1)` noise to the ranks
+once per forward (shared across the batch, so the mask stays input-independent)
+before the hard top-K, giving dropped channels a chance to be selected and
+trained, with the exact `hard` gradient and a deterministic top-K in eval mode.
+`bottleneck_score_temperature` is the Laplace scale or the Gumbel noise
+magnitude, in score units. Scores start
 at `1 + N(0, bottleneck_score_init_std²)` and belong to the bottleneck optimizer
 group. The residual stream
 returned by `return_activations=True` is the post-bottleneck stream, and

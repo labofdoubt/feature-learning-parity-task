@@ -160,8 +160,8 @@ class TopKBottleneck(nn.Module):
             raise ValueError(f"Need 1 <= k <= dim, got k={k}, dim={dim}")
         if selection not in ("activation", "scores"):
             raise ValueError(f"selection must be 'activation' or 'scores', got {selection!r}")
-        if score_grad not in ("hard", "laplace_ste"):
-            raise ValueError(f"score_grad must be 'hard' or 'laplace_ste', got {score_grad!r}")
+        if score_grad not in ("hard", "laplace_ste", "gumbel"):
+            raise ValueError(f"score_grad must be 'hard', 'laplace_ste' or 'gumbel', got {score_grad!r}")
         self.dim = dim
         self.k = k
         self.abs_topk = abs_topk
@@ -208,12 +208,18 @@ class TopKBottleneck(nn.Module):
         "laplace_ste" also differentiates the selection indicator 1[r_j >= theta]
         as the Laplace CDF F_tau(r_j - theta), whose derivative is the Laplace pdf
         exp(-|r_j - theta| / tau) / (2 tau); theta is the midpoint between the K-th
-        and (K+1)-th ranked scores and is treated as a constant.
+        and (K+1)-th ranked scores and is treated as a constant. "gumbel" perturbs
+        the ranks by tau * Gumbel(0, 1) noise (fresh per forward, in training mode
+        only) before the hard top-K and otherwise behaves like "hard".
         """
         assert self.scores is not None
         s = self.scores
         r = s.abs() if self.abs_topk else s
-        _, idx = r.detach().topk(self.k)
+        rank = r.detach()
+        if self.score_grad == "gumbel" and self.training:
+            u = torch.rand_like(rank).clamp_(1e-10, 1.0 - 1e-10)
+            rank = rank + self.score_temperature * (-torch.log(-torch.log(u)))
+        _, idx = rank.topk(self.k)
         hard = torch.zeros_like(s).scatter_(0, idx, 1.0)
         if self.score_grad == "laplace_ste" and self.k < self.dim:
             ranked = r.detach().sort(descending=True).values
