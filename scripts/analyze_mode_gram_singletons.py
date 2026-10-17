@@ -40,6 +40,9 @@ def main() -> None:
     ap.add_argument("--cosine", action="store_true", help="plot the cosine-normalized Gram instead of raw dot products")
     ap.add_argument("--log", action="store_true",
                     help="symmetric log color scale (sign kept; linear below 1e-4 of the block max)")
+    ap.add_argument("--decades", action="store_true",
+                    help="color = floor(log10 |G|), one color per order of magnitude; "
+                         "negative entries are marked with a minus sign")
     args = ap.parse_args()
     run_dir = Path(args.run_dir)
     device = resolve_device("auto")
@@ -75,7 +78,21 @@ def main() -> None:
         else:
             lim = float(np.abs(gram).max())
             shown, kind = gram, "raw Gram (dot products)"
-            if args.log:
+            if args.decades:
+                from matplotlib.colors import BoundaryNorm
+                kind = "log10|G| by decade (− marks negative)"
+                mag = np.log10(np.abs(gram) + 1e-300)
+                top = int(np.ceil(mag.max()))
+                lo = max(top - 8, int(np.floor(mag[np.isfinite(mag)].min())))
+                bounds = np.arange(lo, top + 1)
+                cmap = plt.get_cmap("viridis", len(bounds) - 1)
+                im = ax.imshow(np.clip(mag, lo, top), cmap=cmap,
+                               norm=BoundaryNorm(bounds, cmap.N))
+                for i in range(gram.shape[0]):
+                    for j in range(gram.shape[1]):
+                        if gram[i, j] < 0:
+                            ax.text(j, i, "−", ha="center", va="center", fontsize=6, color="white")
+            elif args.log:
                 from matplotlib.colors import SymLogNorm
                 kind += ", symlog"
                 im = ax.imshow(shown, cmap="RdBu_r",
@@ -85,10 +102,13 @@ def main() -> None:
         ax.set_xticks(range(len(names))); ax.set_xticklabels(names, rotation=90, fontsize=7)
         ax.set_yticks(range(len(names))); ax.set_yticklabels(names, fontsize=7)
         ax.set_title(f"after residual addition {b + 1} (block {b})  {kind}")
-        fig.colorbar(im, ax=ax, fraction=0.046)
+        cb = fig.colorbar(im, ax=ax, fraction=0.046)
+        if args.decades:
+            cb.set_ticks(bounds); cb.set_ticklabels([f"1e{int(b)}" for b in bounds])
     fig.suptitle(f"{run_dir.name} @ step {step}: Gram of mode directions v_S = E[h χ_S], tree modes + singletons")
     fig.tight_layout()
     fname = ("mode_gram_singletons_cosine.png" if args.cosine
+             else "mode_gram_singletons_decades.png" if args.decades
              else "mode_gram_singletons_log.png" if args.log else "mode_gram_singletons.png")
     fig.savefig(out / fname, dpi=130)
     print(out / fname)
