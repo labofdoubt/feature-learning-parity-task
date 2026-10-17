@@ -20,6 +20,7 @@ if str(_ROOT) not in sys.path:
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 import numpy as np
 import pandas as pd
 import torch
@@ -40,6 +41,7 @@ def main() -> None:
     ap.add_argument("--cosine", action="store_true", help="plot the cosine-normalized Gram instead of raw dot products")
     ap.add_argument("--log", action="store_true",
                     help="symmetric log color scale (sign kept; linear below 1e-4 of the block max)")
+    ap.add_argument("--annotate", action="store_true", help="write the value of every cell")
     ap.add_argument("--decades", action="store_true",
                     help="color = floor(log10 |G|), one color per order of magnitude; "
                          "negative entries are marked with a minus sign")
@@ -66,7 +68,13 @@ def main() -> None:
         for b in range(L):
             V[b] += Xw.t() @ acts[b + 1].double()
     out = run_dir / "analysis"; out.mkdir(exist_ok=True)
-    fig, axes = plt.subplots(2, 2, figsize=(16, 15))
+    fig, axes = plt.subplots(2, 2, figsize=(26, 24) if args.annotate else (16, 15))
+
+    def fmt(v: float) -> str:
+        if v == 0:
+            return "0"
+        m, e = f"{v:.1e}".split("e")
+        return f"{m}e{int(e)}"
     for b, ax in enumerate(axes.flat[:L]):
         v = V[b] / x.shape[0]
         gram = (v @ v.t()).cpu().numpy()
@@ -88,10 +96,11 @@ def main() -> None:
                 cmap = plt.get_cmap("viridis", len(bounds) - 1)
                 im = ax.imshow(np.clip(mag, lo, top), cmap=cmap,
                                norm=BoundaryNorm(bounds, cmap.N))
-                for i in range(gram.shape[0]):
-                    for j in range(gram.shape[1]):
-                        if gram[i, j] < 0:
-                            ax.text(j, i, "−", ha="center", va="center", fontsize=6, color="white")
+                if not args.annotate:
+                    for i in range(gram.shape[0]):
+                        for j in range(gram.shape[1]):
+                            if gram[i, j] < 0:
+                                ax.text(j, i, "−", ha="center", va="center", fontsize=6, color="white")
             elif args.log:
                 from matplotlib.colors import SymLogNorm
                 kind += ", symlog"
@@ -99,6 +108,12 @@ def main() -> None:
                                norm=SymLogNorm(linthresh=lim * 1e-4, vmin=-lim, vmax=lim))
             else:
                 im = ax.imshow(shown, cmap="RdBu_r", vmin=-lim, vmax=lim)
+        if args.annotate:
+            for i in range(gram.shape[0]):
+                for j in range(gram.shape[1]):
+                    ax.text(j, i, fmt(float(gram[i, j])), ha="center", va="center",
+                            fontsize=4.2, color="white",
+                            path_effects=[pe.withStroke(linewidth=0.8, foreground="black")])
         ax.set_xticks(range(len(names))); ax.set_xticklabels(names, rotation=90, fontsize=7)
         ax.set_yticks(range(len(names))); ax.set_yticklabels(names, fontsize=7)
         ax.set_title(f"after residual addition {b + 1} (block {b})  {kind}")
@@ -110,7 +125,9 @@ def main() -> None:
     fname = ("mode_gram_singletons_cosine.png" if args.cosine
              else "mode_gram_singletons_decades.png" if args.decades
              else "mode_gram_singletons_log.png" if args.log else "mode_gram_singletons.png")
-    fig.savefig(out / fname, dpi=130)
+    if args.annotate:
+        fname = fname.replace(".png", "_annotated.png")
+    fig.savefig(out / fname, dpi=170 if args.annotate else 130)
     print(out / fname)
 
 
