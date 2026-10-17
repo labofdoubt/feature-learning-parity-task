@@ -354,6 +354,8 @@ with tabs[1]:
             above = np.abs(coef) >= thr
             n_above = int(above.sum())
             sel = np.where(above)[0][:max_terms]
+            # display order: support size ascending (constant first), then |c| desc
+            sel = sorted(sel, key=lambda j: (bin(int(idx[j])).count("1"), -abs(coef[j])))
             terms = [f"{coef[j]:+.3f}·{mode_label(int(idx[j]))}" for j in sel]
             shown = float((coef[sel] ** 2).sum() / (iw["power"][ni] + 1e-30))
             rows.append(dict(
@@ -367,7 +369,8 @@ with tabs[1]:
             f"**{mode_names[gi]}**, sorted by |a_out| (signed coefficient of that mode in the "
             f"post-nonlinearity output). `input` is the exact Walsh decomposition of the "
             f"pre-activation V·h over the {k_rel} relevant bits (top-{iw_all['topk']} stored), "
-            f"keeping terms with |c| ≥ max(rel·max|c|, mult·σ_noise); `shown_frac` is the share "
+            f"keeping terms with |c| ≥ max(rel·max|c|, mult·σ_noise), listed by support size "
+            f"(constant first) then |c|; `shown_frac` is the share "
             f"of E[z²] those terms carry, `n_above` how many of the stored terms pass the "
             f"threshold. Names: tree modes by name, singletons χ_j, other supports χ_{{j,…}} "
             f"(0-based relevant coordinates); `1` is the constant term. Irrelevant bits "
