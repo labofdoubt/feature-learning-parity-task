@@ -55,6 +55,15 @@ class ModelConfig:
     bottleneck_decoder_weight_variance: float | None = None
     # Whether the encoder and decoder linears carry biases (independent of `bias`).
     bottleneck_bias: bool = False
+    # Magnitude-direction decoupling (arXiv:2606.25971) for the bottleneck encoder
+    # and decoder only. Each matrix is W = diag(g_row) W_hat diag(g_col) with the
+    # direction W_hat held on a fixed Frobenius sphere (radius = its init norm,
+    # projected back after every optimizer step) and learnable per-row/per-column
+    # softplus gains that start at 1. Its own init overrides the bottleneck
+    # variances: W_hat ~ N(0, 1/N) entrywise, then scaled to exactly
+    # c_F = sqrt(d_out d_in / N). The bottleneck group trains without weight decay
+    # (the sphere is the regularizer); wd_bottleneck must stay unset / 0.
+    bottleneck_md_decouple: bool = False
     # True: readouts (final and layerwise) read the residual stream right after the
     # residual addition, before that block's bottleneck; the bottleneck output only
     # feeds the next block, so the last bottleneck is inert. False: readouts see the
@@ -83,6 +92,10 @@ class ModelConfig:
             value = getattr(self, name)
             if value is not None and value < 0:
                 raise ValueError(f"{name} must be non-negative")
+            if value is not None and self.bottleneck_md_decouple:
+                raise ValueError(
+                    f"{name} has no effect under bottleneck_md_decouple=True (the MD init "
+                    "draws N(0, 1/N) and projects to the c_F sphere); leave it null")
         return ks
 
 

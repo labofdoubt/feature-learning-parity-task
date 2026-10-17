@@ -130,14 +130,25 @@ def build_optimizer(model: ParityModel, config: OptimizerConfig) -> torch.optim.
         ("bottleneck", model.bottleneck_parameters(), config.lr_bottleneck, config.wd_bottleneck),
         ("readout", model.readout_parameters(), config.lr_readout, config.wd_readout),
     ]
+    md_decouple = bool(getattr(model.config, "bottleneck_md_decouple", False))
     for name, params, group_lr, group_wd in group_specs:
         trainable = [p for p in params if p.requires_grad]
         if trainable:
+            weight_decay = config.weight_decay if group_wd is None else group_wd
+            if name == "bottleneck" and md_decouple:
+                # The direction lives on a fixed-norm sphere and the gains carry the
+                # magnitude: weight decay has no place in either (arXiv:2606.25971).
+                if group_wd not in (None, 0.0):
+                    raise ValueError(
+                        f"wd_bottleneck={group_wd} is incompatible with "
+                        "bottleneck_md_decouple=True; leave it null or 0"
+                    )
+                weight_decay = 0.0
             param_groups.append(
                 {
                     "params": trainable,
                     "lr": config.lr if group_lr is None else group_lr,
-                    "weight_decay": config.weight_decay if group_wd is None else group_wd,
+                    "weight_decay": weight_decay,
                     "name": name,
                 }
             )
@@ -631,6 +642,7 @@ def train(config: ExperimentConfig, resume_from: str | Path | None = None) -> Pa
         loss = mse + barrier
         loss.backward()
         optimizer.step()
+        model.md_project_()
 
         if training.curriculum and active_degree_count < len(curriculum_degrees):
             top_degree = curriculum_degrees[active_degree_count - 1]
@@ -990,6 +1002,7 @@ def _train_reuse_star(config: ExperimentConfig) -> Path:
         loss = mse + barrier
         loss.backward()
         optimizer.step()
+        model.md_project_()
 
         progress.set_postfix(train_mse=f"{mse.item():.4g}", barrier=f"{barrier.item():.4g}")
 

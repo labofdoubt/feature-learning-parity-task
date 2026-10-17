@@ -4,6 +4,7 @@ Run with:  python -m pytest tests/test_bottleneck.py -v
 """
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -203,6 +204,74 @@ def test_readout_before_bottleneck():
     assert torch.allclose(acts_single[-1], single.blocks[2](single.blocks[1].bottleneck(acts_single[2]), apply_bottleneck=False))
     with pytest.raises(ValueError):
         build_model(_config(use_attention=True, readout_before_bottleneck=True), output_dim=3)
+
+
+def test_md_decouple_init_forward_and_gradient_split():
+    torch.manual_seed(0)
+    from parity_net.model import MDLinear, RAW_GAIN_ONE
+    lin = MDLinear(in_features=32, out_features=16, width=32, bias=False)
+    # init: direction on the sphere, gains exactly 1, fused == direction
+    assert lin.direction.norm().item() == pytest.approx(math.sqrt(16 * 32 / 32), rel=1e-6)
+    assert torch.allclose(lin.gain_row, torch.ones(16)) and torch.allclose(lin.gain_col, torch.ones(32))
+    assert torch.allclose(lin.weight, lin.direction)
+    # perturb the gains, check autograd reproduces the paper's gradient split
+    with torch.no_grad():
+        lin.raw_gain_row.copy_(torch.randn(16)); lin.raw_gain_col.copy_(torch.randn(32))
+    x = torch.randn(8, 32)
+    G_target = torch.randn(8, 16)
+    (lin(x) * G_target).sum().backward()
+    G = G_target.t() @ x                      # dL/dW for the fused matrix
+    gr, gc = lin.gain_row.detach(), lin.gain_col.detach()
+    W_hat = lin.direction.detach()
+    assert torch.allclose(lin.direction.grad, gr[:, None] * G * gc[None, :], atol=1e-5)
+    g_row = ((W_hat * G) * gc[None, :]).sum(1) * torch.sigmoid(lin.raw_gain_row.detach())
+    g_col = (gr[:, None] * (W_hat * G)).sum(0) * torch.sigmoid(lin.raw_gain_col.detach())
+    assert torch.allclose(lin.raw_gain_row.grad, g_row, atol=1e-5)
+    assert torch.allclose(lin.raw_gain_col.grad, g_col, atol=1e-5)
+    # a step off the sphere is undone by project_
+    with torch.no_grad():
+        lin.direction.add_(0.1 * torch.randn_like(lin.direction))
+    assert lin.direction.norm().item() != pytest.approx(float(lin.c_f), rel=1e-3)
+    lin.project_()
+    assert lin.direction.norm().item() == pytest.approx(float(lin.c_f), rel=1e-6)
+
+
+def test_md_decouple_model_optimizer_and_training_step():
+    torch.manual_seed(0)
+    from parity_net.model import RAW_GAIN_ONE
+    config = _config(bottleneck_md_decouple=True, bottleneck_k=[2, 2, 2])
+    model = build_model(config, output_dim=3)
+    for b in model.blocks:
+        assert b.bottleneck.md_decouple
+        assert b.bottleneck.encoder.c_f.item() == pytest.approx(math.sqrt(16))   # sqrt(d_b * N / N)
+        assert b.bottleneck.decoder.c_f.item() == pytest.approx(math.sqrt(16))
+    # bottleneck group: direction + gains, no weight decay; wd_bottleneck rejected
+    opt = build_optimizer(model, OptimizerConfig(name="sgd", lr=1e-2, momentum=0.9, weight_decay=0.1))
+    groups = {g["name"]: g for g in opt.param_groups}
+    assert groups["bottleneck"]["weight_decay"] == 0.0 and groups["hidden"]["weight_decay"] == 0.1
+    n_bn = sum(p.numel() for p in groups["bottleneck"]["params"])
+    assert n_bn == 3 * 2 * (16 * 32 + 16 + 32)
+    with pytest.raises(ValueError):
+        build_optimizer(model, OptimizerConfig(wd_bottleneck=0.01))
+    # one SGD step + projection keeps every direction on its sphere, gains move
+    x = torch.randint(0, 2, (16, 8)).float() * 2 - 1
+    model(x).square().sum().backward()
+    opt.step(); model.md_project_()
+    for b in model.blocks:
+        for lin in (b.bottleneck.encoder, b.bottleneck.decoder):
+            assert lin.direction.norm().item() == pytest.approx(float(lin.c_f), rel=1e-6)
+            # gains received gradient and moved (by a tiny amount at this init scale)
+            assert lin.raw_gain_row.grad is not None and lin.raw_gain_row.grad.abs().sum() > 0
+            assert not torch.equal(lin.raw_gain_row, torch.full_like(lin.raw_gain_row, RAW_GAIN_ONE))
+    # variances report the fused weight; config rejects explicit variances under MD
+    assert "blocks.0.bottleneck.encoder.weight" in model.weight_variances()
+    with pytest.raises(ValueError):
+        _config(bottleneck_md_decouple=True, bottleneck_encoder_weight_variance=0.1).bottleneck_ks()
+    # state dict round trip and config round trip
+    other = build_model(config, output_dim=3)
+    other.load_state_dict(model.state_dict())
+    assert torch.allclose(model(x), other(x))
+    assert not build_model(_config(), output_dim=3).blocks[0].bottleneck.md_decouple
 
 
 if __name__ == "__main__":

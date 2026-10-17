@@ -108,7 +108,18 @@ largest signed entries with no ReLU. `bottleneck_encoder_weight_variance` and
 preserves the residual-stream scale at init. `bottleneck_bias` adds biases to
 the two linears independently of `bias`. Bottleneck weights form their own
 optimizer group with `lr_bottleneck` / `wd_bottleneck` (falling back to `lr` /
-`weight_decay`); they are not part of the `hidden` group. The residual stream
+`weight_decay`); they are not part of the `hidden` group.
+`bottleneck_md_decouple: true` trains the two bottleneck linears with
+magnitude-direction decoupling (arXiv:2606.25971, as in the weight-sparsity
+repo): each matrix is `diag(g_row) · W_hat · diag(g_col)` with the direction
+`W_hat` kept on a fixed Frobenius sphere (radius `sqrt(d_out·d_in/N)`, its init
+norm, re-projected after every optimizer step) and learnable per-row and
+per-column softplus gains starting at 1. Its own init replaces the bottleneck
+variances (`W_hat ~ N(0, 1/N)` entrywise, then scaled onto the sphere); the
+bottleneck group trains without weight decay and `wd_bottleneck` must stay unset.
+The gains and direction are ordinary parameters (`direction`, `raw_gain_row`,
+`raw_gain_col`), so any base optimizer works and `.weight` returns the fused
+matrix. `readout_before_bottleneck` is unaffected. The residual stream
 returned by `return_activations=True` is the post-bottleneck stream, and
 `model.bottleneck_codes(x)` returns the sparse codes of every bottleneck.
 

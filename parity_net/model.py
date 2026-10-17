@@ -75,6 +75,63 @@ def scaled_embedding(input_dim: int, N: int, variance: float | None) -> torch.Te
     return embedding * math.sqrt(N * variance)
 
 
+# softplus(RAW_GAIN_ONE) == 1, so every MD gain starts at exactly 1 and the fused
+# weight equals the direction at initialization.
+RAW_GAIN_ONE = math.log(math.e - 1.0)
+
+
+class MDLinear(nn.Module):
+    """Linear layer with magnitude-direction decoupling (arXiv:2606.25971).
+
+    W = diag(softplus(raw_row)) @ direction @ diag(softplus(raw_col)), where the
+    direction is kept on the Frobenius sphere ||direction|| = c_f by `project_()`,
+    which the training loop calls after every optimizer step. Autograd through the
+    fused product gives exactly the paper's gradient split (Algorithm 2): the
+    direction sees g_row * G * g_col and each gain the row/column sum of
+    direction * G weighted by the other gain, times softplus'. Any base optimizer
+    (SGD, Adam) then steps the three parameters; the projection closes the loop.
+
+    Init: direction entries N(0, 1/width) scaled to exactly
+    c_f = sqrt(out_features * in_features / width), gains = 1, bias = 0.
+    """
+
+    def __init__(self, in_features: int, out_features: int, width: int, bias: bool) -> None:
+        super().__init__()
+        self.in_features, self.out_features = in_features, out_features
+        self.direction = nn.Parameter(torch.empty(out_features, in_features))
+        self.raw_gain_row = nn.Parameter(torch.full((out_features,), RAW_GAIN_ONE))
+        self.raw_gain_col = nn.Parameter(torch.full((in_features,), RAW_GAIN_ONE))
+        self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
+        c_f = math.sqrt(out_features * in_features / width)
+        self.register_buffer("c_f", torch.tensor(float(c_f)))
+        nn.init.normal_(self.direction, mean=0.0, std=1.0 / math.sqrt(width))
+        self.project_()
+
+    @torch.no_grad()
+    def project_(self) -> None:
+        """Put the direction back on its sphere (after each optimizer step)."""
+        self.direction.mul_(self.c_f / self.direction.norm().clamp_min(1e-12))
+
+    @property
+    def gain_row(self) -> torch.Tensor:
+        return F.softplus(self.raw_gain_row)
+
+    @property
+    def gain_col(self) -> torch.Tensor:
+        return F.softplus(self.raw_gain_col)
+
+    @property
+    def weight(self) -> torch.Tensor:
+        """The fused matrix, so code reading `.weight` sees what the forward uses."""
+        return self.gain_row.unsqueeze(1) * self.direction * self.gain_col.unsqueeze(0)
+
+    def extra_repr(self) -> str:
+        return f"in_features={self.in_features}, out_features={self.out_features}, c_f={float(self.c_f):.4g}"
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.linear(x, self.weight, self.bias)
+
+
 class TopKBottleneck(nn.Module):
     """Sparse bottleneck on the residual stream: h -> W_dec TopK(W_enc h).
 
@@ -92,6 +149,7 @@ class TopKBottleneck(nn.Module):
         encoder_variance: float | None,
         decoder_variance: float | None,
         bias: bool,
+        md_decouple: bool = False,
     ) -> None:
         super().__init__()
         if dim <= 0 or k <= 0 or k > dim:
@@ -99,23 +157,35 @@ class TopKBottleneck(nn.Module):
         self.dim = dim
         self.k = k
         self.abs_topk = abs_topk
-        self.encoder = nn.Linear(width, dim, bias=bias)
-        self.decoder = nn.Linear(dim, width, bias=bias)
-        # None: 1/fan_in for the encoder; 1/K for the decoder, since only K of the
-        # d_bottleneck code entries are nonzero, so this keeps ||h|| roughly fixed.
-        enc_var = 1.0 / width if encoder_variance is None else encoder_variance
-        dec_var = 1.0 / k if decoder_variance is None else decoder_variance
-        nn.init.normal_(self.encoder.weight, mean=0.0, std=math.sqrt(enc_var))
-        nn.init.normal_(self.decoder.weight, mean=0.0, std=math.sqrt(dec_var))
-        for linear in (self.encoder, self.decoder):
-            if linear.bias is not None:
-                nn.init.zeros_(linear.bias)
+        self.md_decouple = md_decouple
+        if md_decouple:
+            # Magnitude-direction decoupled linears with their own init (see MDLinear).
+            self.encoder: nn.Module = MDLinear(width, dim, width, bias)
+            self.decoder: nn.Module = MDLinear(dim, width, width, bias)
+        else:
+            self.encoder = nn.Linear(width, dim, bias=bias)
+            self.decoder = nn.Linear(dim, width, bias=bias)
+            # None: 1/fan_in for the encoder; 1/K for the decoder, since only K of the
+            # d_bottleneck code entries are nonzero, so this keeps ||h|| roughly fixed.
+            enc_var = 1.0 / width if encoder_variance is None else encoder_variance
+            dec_var = 1.0 / k if decoder_variance is None else decoder_variance
+            nn.init.normal_(self.encoder.weight, mean=0.0, std=math.sqrt(enc_var))
+            nn.init.normal_(self.decoder.weight, mean=0.0, std=math.sqrt(dec_var))
+            for linear in (self.encoder, self.decoder):
+                if linear.bias is not None:
+                    nn.init.zeros_(linear.bias)
         # Analysis side-channel: when True, forward() stores the sparse code tensor.
         self.record_codes = False
         self.last_codes: torch.Tensor | None = None
 
     def extra_repr(self) -> str:
-        return f"dim={self.dim}, k={self.k}, abs_topk={self.abs_topk}"
+        return f"dim={self.dim}, k={self.k}, abs_topk={self.abs_topk}, md_decouple={self.md_decouple}"
+
+    @torch.no_grad()
+    def md_project_(self) -> None:
+        if self.md_decouple:
+            self.encoder.project_()
+            self.decoder.project_()
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         """The sparse code: exactly K nonzero entries along the last dim."""
@@ -204,6 +274,7 @@ def build_bottleneck(config: ModelConfig, block_idx: int) -> TopKBottleneck | No
         config.bottleneck_encoder_weight_variance,
         config.bottleneck_decoder_weight_variance,
         config.bottleneck_bias,
+        config.bottleneck_md_decouple,
     )
 
 
@@ -225,6 +296,13 @@ class BottleneckMixin:
     def bottleneck_parameters(self):
         for bottleneck in self.bottleneck_modules():
             yield from bottleneck.parameters()
+
+    @torch.no_grad()
+    def md_project_(self) -> None:
+        """Re-project every MD-decoupled bottleneck direction onto its sphere.
+        Call after each optimizer step; a no-op without bottleneck_md_decouple."""
+        for bottleneck in self.bottleneck_modules():
+            bottleneck.md_project_()
 
     def hidden_parameters(self):
         """Every block parameter except the bottleneck encoders/decoders."""
