@@ -180,51 +180,27 @@ def rep_matrix():
     return P / (tot_i[None, :] + 1e-30), "p(S|i)"
 
 
-def neuron_order(kind: str, ref_C: np.ndarray, ref_var: np.ndarray) -> np.ndarray:
+def mode_noise_threshold(ref_var: np.ndarray, abs_floor: float, mult: float) -> np.ndarray:
+    """Per-neuron power floor for 'produced' modes: max(abs_floor, mult * var_i / n),
+    i.e. a multiple of the sampling variance of a_iS estimated from n samples."""
+    return np.maximum(abs_floor, mult * ref_var / max(1, data["num_samples"]))
+
+
+def neuron_order(kind: str, ref_C: np.ndarray, ref_var: np.ndarray,
+                 hd_floor: float = 1e-8, hd_mult: float = 10.0) -> np.ndarray:
+    """Overview ordering. Groups follow hierarchy order (d2_0..d2_7, d4_*, ...);
+    inside a group neurons sort by the power of their group mode."""
     rP = ref_C ** 2
-    rtot = rP.sum(0)
-    rdom = rP.argmax(0)
     if kind == "original neuron index":
         return np.arange(N)
-    if kind == "dominant mode (sorted by shown coefficient)":
-        # groups in hierarchy order (d2_0..d2_7, d4_*, d8_*, d16_0); inside a
-        # group neurons sort by the MAGNITUDE of their own dominant-mode value
-        # in the currently selected coefficient representation
-        if rep == "Raw signed coefficient" or rep == "Absolute coefficient":
-            V = np.abs(ref_C)
-        elif rep == "Fraction of neuron tracked power":
-            V = rP / (rtot + 1e-30)
-        else:  # Power |a|^2
-            V = rP
-        vsel = V[rdom, np.arange(N)]
-        return np.lexsort((-vsel, rdom))
     if kind == "dominant mode":
-        return np.lexsort((-rtot, rdom))
-    if kind == "dominant mode (tree only, ignores d1)":
-        # dominance and grouping computed over degree>=2 modes only, so adding
-        # the d1 rows to the display does not reshuffle the staircase
-        tmask = np.array([m["degree"] > 1 for m in mode_sel])
-        if not tmask.any():
-            return np.lexsort((-rtot, rdom))
-        rPt = rP[tmask]
-        return np.lexsort((-rPt.sum(0), rPt.argmax(0)))
-    if kind == "dominant mode degree":
-        rdeg = np.array([mode_sel[d]["degree"] for d in rdom])
-        return np.lexsort((-rtot, rdeg))
-    if kind == "total tracked power":
-        return np.argsort(-rtot)
-    if kind == "purity":
-        return np.argsort(-(rP / (rtot + 1e-30)).max(0))
-    if kind == "M_eff":
-        p = rP / (rtot + 1e-30)
-        return np.argsort(1.0 / ((p ** 2).sum(0) + 1e-30))
-    if kind == "coverage":
-        return np.argsort(-(rtot / (ref_var + 1e-30)))
-    if kind == "selected mode coefficient":
-        mi = mode_names.index(st.session_state.sel_mode)
-        return np.argsort(-rP[mi])
-    # clustered mode fingerprint: dominant mode, then descending power
-    return np.lexsort((-rtot, rdom))
+        g = rP.argmax(0)
+    elif kind == "highest-degree mode produced":
+        degs = np.array([m["degree"] for m in mode_sel])
+        g = M.highest_degree_mode(ref_C, degs, mode_noise_threshold(ref_var, hd_floor, hd_mult))
+    else:
+        raise ValueError(kind)
+    return np.lexsort((-rP[g, np.arange(N)], g))
 
 
 tabs = st.tabs(["Overview", "Input Walsh", "Mode view", "Neuron view",
@@ -235,17 +211,24 @@ tabs = st.tabs(["Overview", "Input Walsh", "Mode view", "Neuron view",
 with tabs[0]:
     c1, c2, c3 = st.columns([2, 2, 3])
     n_sort = c1.selectbox("Neuron sorting", [
-        "original neuron index", "dominant mode (sorted by shown coefficient)",
-        "dominant mode", "dominant mode (tree only, ignores d1)",
-        "dominant mode degree",
-        "total tracked power", "purity", "M_eff", "coverage",
-        "selected mode coefficient", "clustered mode fingerprint"])
+        "original neuron index", "dominant mode", "highest-degree mode produced"],
+        key="ov_sort")
     m_sort = c2.selectbox("Mode sorting",
                           ["hierarchy", "degree", "total mode power", "N_eff"])
     drop_lowvar = c3.checkbox("remove low-variance neurons", value=False,
                               key="drop_lowvar")
     var_exp = c3.slider("variance threshold: 10^", -6.0, 0.0, -4.0, step=0.1,
                         key="var_exp", disabled=not drop_lowvar)
+    hd_floor, hd_mult = 1e-8, 10.0
+    if n_sort == "highest-degree mode produced":
+        h1, h2 = st.columns(2)
+        hd_floor = h1.number_input("produced-mode floor: min a² (absolute)", value=1e-8,
+                                   format="%.1e", key="hd_floor")
+        hd_mult = h2.number_input("produced-mode floor: × sampling noise σ²/n", value=10.0,
+                                  min_value=0.0, step=1.0, key="hd_mult")
+        st.caption("A neuron is assigned the highest-degree tracked mode whose power "
+                   "a² ≥ max(floor, mult·σ²_i/n) — ties by power; neurons with nothing "
+                   "above the floor fall back to their dominant mode.")
 
     # ordering reference: which checkpoint supplies the sort keys.
     # "fixed neuron index" + a sort uses FINAL-checkpoint keys so the order
@@ -255,8 +238,7 @@ with tabs[0]:
     else:  # "final checkpoint", or "fixed neuron index" with a sort chosen
         fin = load_step(str(RUNS_ROOT), run, steps[-1])["locations"][loc_name]
         ref, ref_var = fin["C"][mode_idx], fin["var"]
-    nord = (np.arange(N) if n_sort == "original neuron index"
-            else neuron_order(n_sort, ref, ref_var))
+    nord = neuron_order(n_sort, ref, ref_var, hd_floor, hd_mult)
     if drop_lowvar:
         keep_n = var[nord] >= 10.0 ** var_exp
         nord = nord[keep_n]
@@ -321,11 +303,23 @@ with tabs[1]:
             return ("χ_" + str(bits[0])) if len(bits) == 1 else \
                 "χ_{" + ",".join(map(str, bits)) + "}"
 
-        # group = dominant OUTPUT mode (same C / degree filter as the sidebar)
-        counts = np.bincount(dom, minlength=len(mode_names))
+        # group = OUTPUT mode (same C / degree filter as the sidebar), by either rule
+        rule = st.radio("Grouping rule", ["dominant mode", "highest-degree mode produced"],
+                        horizontal=True, key="iw_rule")
+        if rule == "dominant mode":
+            grp = dom
+        else:
+            r1, r2 = st.columns(2)
+            iw_floor = r1.number_input("produced-mode floor: min a² (absolute)", value=1e-8,
+                                       format="%.1e", key="iw_hd_floor")
+            iw_mult = r2.number_input("produced-mode floor: × sampling noise σ²/n", value=10.0,
+                                      min_value=0.0, step=1.0, key="iw_hd_mult")
+            grp = M.highest_degree_mode(C, np.array([m["degree"] for m in mode_sel]),
+                                        mode_noise_threshold(var, iw_floor, iw_mult))
+        counts = np.bincount(grp, minlength=len(mode_names))
         group_labels = [f"{n}  ({counts[i]} neurons)" for i, n in enumerate(mode_names)]
         c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
-        g_label = c1.selectbox("Neuron group: dominant output mode", group_labels,
+        g_label = c1.selectbox("Neuron group: output mode", group_labels,
                                index=len(group_labels) - 1, key="iw_group")
         gi = group_labels.index(g_label)
         max_terms = c2.slider("max terms", 1, 16, 6, key="iw_terms")
@@ -339,7 +333,7 @@ with tabs[1]:
                                value=True, key="iw_hide_low")
         max_rows = c7.number_input("max rows", 10, 5000, 300, step=10, key="iw_rows")
 
-        members = np.where(dom == gi)[0]
+        members = np.where(grp == gi)[0]
         if hide_low:
             members = members[~low_power[members]]
         a_out = C[gi, members]
@@ -369,7 +363,7 @@ with tabs[1]:
                 input=" ".join(terms).replace("+", "+ ").replace("-", "- ").lstrip("+ "),
             ))
         st.caption(
-            f"{loc_name} @ step {step}: {len(members)} neurons whose dominant output mode is "
+            f"{loc_name} @ step {step}: {len(members)} neurons whose output mode ({rule}) is "
             f"**{mode_names[gi]}**, sorted by |a_out| (signed coefficient of that mode in the "
             f"post-nonlinearity output). `input` is the exact Walsh decomposition of the "
             f"pre-activation V·h over the {k_rel} relevant bits (top-{iw_all['topk']} stored), "

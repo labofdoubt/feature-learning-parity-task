@@ -79,6 +79,23 @@ def dominant_mode(C: np.ndarray) -> np.ndarray:
     return (C ** 2).argmax(axis=0)
 
 
+def highest_degree_mode(C: np.ndarray, degrees: np.ndarray, threshold: np.ndarray) -> np.ndarray:
+    """Per neuron, the highest-degree mode it produces above noise, shape [N].
+
+    A mode S counts as produced by neuron i when a_iS^2 >= threshold[i]. Among
+    the produced modes the one with the largest degree wins, ties broken by
+    power; a neuron producing nothing above threshold falls back to its
+    dominant mode. `degrees` has shape [M], `threshold` shape [N].
+    """
+    P = C ** 2
+    produced = P >= threshold[None, :]
+    deg = np.where(produced, degrees[:, None], -1)             # [M, N]
+    best_deg = deg.max(axis=0)                                  # [N]
+    cand = np.where(deg == best_deg[None, :], P, -np.inf)       # tie-break by power
+    choice = cand.argmax(axis=0)
+    return np.where(best_deg < 0, P.argmax(axis=0), choice)
+
+
 # ── mode x mode neuron co-localization ───────────────────────────────────────
 
 def mode_colocalization(C: np.ndarray, signed: bool = False) -> np.ndarray:
