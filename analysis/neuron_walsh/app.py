@@ -220,7 +220,7 @@ with tabs[0]:
     c1, c2, c3 = st.columns([2, 2, 3])
     n_sort = c1.selectbox("Neuron sorting", [
         "original neuron index", "dominant mode", "highest-degree mode produced"],
-        key="ov_sort")
+        index=2, key="ov_sort")
     m_sort = c2.selectbox("Mode sorting",
                           ["hierarchy", "degree", "total mode power", "N_eff"])
     drop_lowvar = c3.checkbox("remove low-variance neurons", value=False,
