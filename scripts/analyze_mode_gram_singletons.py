@@ -68,7 +68,12 @@ def main() -> None:
         for b in range(L):
             V[b] += Xw.t() @ acts[b + 1].double()
     out = run_dir / "analysis"; out.mkdir(exist_ok=True)
-    fig, axes = plt.subplots(2, 2, figsize=(26, 24) if args.annotate else (16, 15))
+    # annotated: one large figure per block so the cell values stay legible
+    if args.annotate:
+        figs = [plt.subplots(1, 1, figsize=(18, 17)) for _ in range(L)]
+        fig, axes = None, np.array([ax for _, ax in figs])
+    else:
+        fig, axes = plt.subplots(2, 2, figsize=(16, 15))
 
     def fmt(v: float) -> str:
         if v == 0:
@@ -112,23 +117,30 @@ def main() -> None:
             for i in range(gram.shape[0]):
                 for j in range(gram.shape[1]):
                     ax.text(j, i, fmt(float(gram[i, j])), ha="center", va="center",
-                            fontsize=4.2, color="white",
+                            fontsize=6.5, color="white",
                             path_effects=[pe.withStroke(linewidth=0.8, foreground="black")])
         ax.set_xticks(range(len(names))); ax.set_xticklabels(names, rotation=90, fontsize=7)
         ax.set_yticks(range(len(names))); ax.set_yticklabels(names, fontsize=7)
         ax.set_title(f"after residual addition {b + 1} (block {b})  {kind}")
-        cb = fig.colorbar(im, ax=ax, fraction=0.046)
+        cb = (fig or ax.figure).colorbar(im, ax=ax, fraction=0.046)
         if args.decades:
             cb.set_ticks(bounds); cb.set_ticklabels([f"1e{int(b)}" for b in bounds])
-    fig.suptitle(f"{run_dir.name} @ step {step}: Gram of mode directions v_S = E[h χ_S], tree modes + singletons")
-    fig.tight_layout()
+    title = f"{run_dir.name} @ step {step}: Gram of mode directions v_S = E[h χ_S], tree modes + singletons"
     fname = ("mode_gram_singletons_cosine.png" if args.cosine
              else "mode_gram_singletons_decades.png" if args.decades
              else "mode_gram_singletons_log.png" if args.log else "mode_gram_singletons.png")
     if args.annotate:
-        fname = fname.replace(".png", "_annotated.png")
-    fig.savefig(out / fname, dpi=170 if args.annotate else 130)
-    print(out / fname)
+        for b, (f, ax) in enumerate(figs):
+            ax.set_title(f"{title}\n{ax.get_title()}")
+            f.tight_layout()
+            name = fname.replace(".png", f"_annotated_block{b}.png")
+            f.savefig(out / name, dpi=150)
+            print(out / name)
+    else:
+        fig.suptitle(title)
+        fig.tight_layout()
+        fig.savefig(out / fname, dpi=130)
+        print(out / fname)
 
 
 if __name__ == "__main__":
