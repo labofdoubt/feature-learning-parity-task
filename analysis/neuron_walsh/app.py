@@ -68,6 +68,23 @@ def load_step(root: str, run: str, step: int) -> dict:
     return out
 
 
+@st.cache_data(show_spinner="loading input-Walsh artifact...", max_entries=8)
+def load_input_walsh(root: str, run: str, step: int) -> dict | None:
+    """Optional exact pre-activation spectrum (analysis.neuron_walsh.input_walsh)."""
+    p = (Path(root) / run / "analysis" / "neuron_walsh" / "input_walsh"
+         / f"step_{step:08d}.pt")
+    if not p.exists():
+        return None
+    raw = torch.load(p, map_location="cpu", weights_only=False)
+    blocks = {}
+    for b in raw["blocks"]:
+        blocks[b["block"]] = {k: (v.numpy() if hasattr(v, "numpy") else v)
+                              for k, v in b.items()}
+    return dict(step=raw["step"], relevant_dim=raw["relevant_dim"],
+                repeats=raw["repeats"], topk=raw["topk"], modes=raw["modes"],
+                blocks=blocks)
+
+
 @st.cache_data(show_spinner="scanning steps for y-range...")
 def mode_rank_extremes(root: str, run: str, loc_name: str, mode_reg_idx: int,
                        topn: int) -> tuple[float, float]:
@@ -208,8 +225,9 @@ def neuron_order(kind: str, ref_C: np.ndarray, ref_var: np.ndarray) -> np.ndarra
     return np.lexsort((-rtot, rdom))
 
 
-tabs = st.tabs(["Overview", "Mode view", "Neuron view", "Layer population",
-                "Mode interactions", "Training dynamics", "Hierarchy"])
+tabs = st.tabs(["Overview", "Input Walsh", "Mode view", "Neuron view",
+                "Layer population", "Mode interactions", "Training dynamics",
+                "Hierarchy"])
 
 # ── Overview: neuron x mode heatmap ──────────────────────────────────────────
 with tabs[0]:
@@ -277,8 +295,109 @@ with tabs[0]:
                f"Sanity: layer power H(S)=Σ_i a² holds by construction; see compute log for "
                f"independent checks.")
 
-# ── Mode view ────────────────────────────────────────────────────────────────
+# ── Input Walsh: what each neuron type reads ─────────────────────────────────
 with tabs[1]:
+    iw_all = load_input_walsh(str(RUNS_ROOT), run, step)
+    if iw_all is None:
+        st.info("No input-Walsh artifact for this step. Compute it with\n\n"
+                f"`python -m analysis.neuron_walsh.input_walsh --run {run}`\n\n"
+                "(or pass `--input-walsh` to analysis.neuron_walsh.compute).")
+    else:
+        iw = iw_all["blocks"][loc["block"]]
+        k_rel = iw_all["relevant_dim"]
+        # bitmask -> display name: tree modes by tree name, singletons chi_j,
+        # anything else chi_{j1,j2,...} (0-based relevant coordinates)
+        tree_name = {sum(1 << j for j in m["support"]): m["name"]
+                     for m in iw_all["modes"] if m["degree"] > 1}
+
+        def mode_label(s: int) -> str:
+            if s == 0:
+                return "1"
+            if s in tree_name:
+                return tree_name[s]
+            bits = [j for j in range(k_rel) if (s >> j) & 1]
+            return ("χ_" + str(bits[0])) if len(bits) == 1 else \
+                "χ_{" + ",".join(map(str, bits)) + "}"
+
+        # group = dominant OUTPUT mode (same C / degree filter as the sidebar)
+        counts = np.bincount(dom, minlength=len(mode_names))
+        group_labels = [f"{n}  ({counts[i]} neurons)" for i, n in enumerate(mode_names)]
+        c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
+        g_label = c1.selectbox("Neuron group: dominant output mode", group_labels,
+                               index=len(group_labels) - 1, key="iw_group")
+        gi = group_labels.index(g_label)
+        max_terms = c2.slider("max terms", 1, 16, 6, key="iw_terms")
+        rel_thr = c3.number_input("relative threshold (× largest |c|)", 0.0, 1.0,
+                                  0.05, step=0.01, format="%.2f", key="iw_rel")
+        noise_mult = c4.number_input("noise multiplier (× robust σ)", 0.0, 100.0,
+                                     5.0, step=1.0, key="iw_noise")
+        c5, c6, c7 = st.columns(3)
+        show_const = c5.checkbox("include constant term", value=True, key="iw_const")
+        hide_low = c6.checkbox("hide neurons below the sidebar noise floor",
+                               value=True, key="iw_hide_low")
+        max_rows = c7.number_input("max rows", 10, 5000, 300, step=10, key="iw_rows")
+
+        members = np.where(dom == gi)[0]
+        if hide_low:
+            members = members[~low_power[members]]
+        a_out = C[gi, members]
+        members = members[np.argsort(-np.abs(a_out))]
+        a_out = C[gi, members]
+
+        rows = []
+        for ni, a in zip(members[:int(max_rows)], a_out[:int(max_rows)]):
+            idx, coef = iw["top_idx"][ni], iw["top_coef"][ni]
+            if not show_const:
+                keep0 = idx != 0
+                idx, coef = idx[keep0], coef[keep0]
+            if len(coef) == 0:
+                rows.append(dict(neuron=int(ni), a_out=float(a), input_power=float(iw["power"][ni]),
+                                 shown_frac=0.0, n_above=0, input=""))
+                continue
+            thr = max(rel_thr * np.abs(coef).max(), noise_mult * iw["noise_sigma"][ni])
+            above = np.abs(coef) >= thr
+            n_above = int(above.sum())
+            sel = np.where(above)[0][:max_terms]
+            terms = [f"{coef[j]:+.3f}·{mode_label(int(idx[j]))}" for j in sel]
+            shown = float((coef[sel] ** 2).sum() / (iw["power"][ni] + 1e-30))
+            rows.append(dict(
+                neuron=int(ni), a_out=float(a), input_power=float(iw["power"][ni]),
+                shown_frac=shown,
+                n_above=(f"≥{iw_all['topk']}" if n_above >= iw_all["topk"] else n_above),
+                input=" ".join(terms).replace("+", "+ ").replace("-", "- ").lstrip("+ "),
+            ))
+        st.caption(
+            f"{loc_name} @ step {step}: {len(members)} neurons whose dominant output mode is "
+            f"**{mode_names[gi]}**, sorted by |a_out| (signed coefficient of that mode in the "
+            f"post-nonlinearity output). `input` is the exact Walsh decomposition of the "
+            f"pre-activation V·h over the {k_rel} relevant bits (top-{iw_all['topk']} stored), "
+            f"keeping terms with |c| ≥ max(rel·max|c|, mult·σ_noise); `shown_frac` is the share "
+            f"of E[z²] those terms carry, `n_above` how many of the stored terms pass the "
+            f"threshold. Names: tree modes by name, singletons χ_j, other supports χ_{{j,…}} "
+            f"(0-based relevant coordinates); `1` is the constant term. Irrelevant bits "
+            f"averaged over {iw_all['repeats']} draws.")
+        st.dataframe(rows, use_container_width=True, height=min(900, 60 + 35 * max(1, len(rows))),
+                     column_config={
+                         "a_out": st.column_config.NumberColumn(format="%.4f"),
+                         "input_power": st.column_config.NumberColumn(format="%.3e"),
+                         "shown_frac": st.column_config.NumberColumn(format="%.3f"),
+                         "input": st.column_config.TextColumn(width="large"),
+                     })
+        with st.expander("plain-text list (full decompositions)", expanded=False):
+            st.code("\n".join(
+                f"n{r['neuron']:5d}  a_out={r['a_out']:+.4f}  E[z²]={r['input_power']:.2e}  "
+                f"shown={r['shown_frac']:.2f}  z = {r['input']}" for r in rows) or "(empty)",
+                language=None)
+        with st.expander("group summary: input power by support size"):
+            dp = iw["degree_power"][members] / (iw["power"][members, None] + 1e-30)
+            fdeg = go.Figure(go.Bar(x=[str(j) for j in range(dp.shape[1])], y=dp.mean(0)))
+            fdeg.update_layout(height=260, xaxis_title="|S| (support size)",
+                               yaxis_title="mean share of E[z²]",
+                               margin=dict(l=10, r=10, t=20, b=10))
+            st.plotly_chart(fdeg, use_container_width=True)
+
+# ── Mode view ────────────────────────────────────────────────────────────────
+with tabs[2]:
     sel_mode = st.selectbox("Mode", mode_names, key="sel_mode")
     mi = mode_names.index(sel_mode)
     md = mode_sel[mi]
@@ -314,7 +433,7 @@ with tabs[1]:
     st.plotly_chart(f3, use_container_width=True)
 
 # ── Neuron view ──────────────────────────────────────────────────────────────
-with tabs[2]:
+with tabs[3]:
     ni = int(st.number_input("Neuron", 0, N - 1, key="sel_neuron"))
     cols = st.columns(5)
     flags = " ⚠ insufficient tracked-mode power" if low_power[ni] else ""
@@ -341,7 +460,7 @@ with tabs[2]:
     st.plotly_chart(f, use_container_width=True)
 
 # ── Layer population ─────────────────────────────────────────────────────────
-with tabs[3]:
+with tabs[4]:
     ax_opts = {"M_eff": meff, "purity": pur, "coverage": cov,
                "total tracked power": tot_i,
                "max |correlation|": np.abs(R).max(0),
@@ -385,7 +504,7 @@ with tabs[3]:
     c4.plotly_chart(h, use_container_width=True)
 
 # ── Mode interactions ────────────────────────────────────────────────────────
-with tabs[4]:
+with tabs[5]:
     signed = st.toggle("Signed coefficient alignment (default: power co-localization)")
     K = M.mode_colocalization(C, signed=signed)
     f = go.Figure(go.Heatmap(z=K, x=mode_names, y=mode_names,
@@ -398,7 +517,7 @@ with tabs[4]:
     st.plotly_chart(f, use_container_width=True)
 
 # ── Training dynamics ────────────────────────────────────────────────────────
-with tabs[5]:
+with tabs[6]:
     sel_mode = st.selectbox("Mode (trajectory)", mode_names,
                             index=mode_names.index(st.session_state.sel_mode),
                             key="traj_mode")
@@ -436,7 +555,7 @@ with tabs[5]:
     c2.plotly_chart(f2, use_container_width=True)
 
 # ── Hierarchy ────────────────────────────────────────────────────────────────
-with tabs[6]:
+with tabs[7]:
     xs, ys, sizes, texts, hovers = [], [], [], [], []
     ex, ey = [], []
     pos = {}

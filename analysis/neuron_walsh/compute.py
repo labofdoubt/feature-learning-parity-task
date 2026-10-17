@@ -193,7 +193,13 @@ def main() -> None:
                         help="'all', 'final', or comma-separated steps")
     parser.add_argument("--num-samples", type=int, default=65_536)
     parser.add_argument("--batch-size", type=int, default=2048)
+    parser.add_argument("--input-walsh", action="store_true",
+                        help="also compute the exact input (pre-activation) Walsh "
+                             "spectrum per neuron (analysis.neuron_walsh.input_walsh)")
     args = parser.parse_args()
+    if args.input_walsh:
+        from .input_walsh import run_input_walsh_checkpoint
+        iw_dir = Path(args.runs_root) / args.run / "analysis" / "neuron_walsh" / "input_walsh"
 
     device = resolve_device("cuda" if torch.cuda.is_available() else "cpu")
     run_dir = Path(args.runs_root) / args.run
@@ -233,6 +239,9 @@ def main() -> None:
                   f"(degrees {sorted(set(m['degree'] for m in modes))})")
         run_checkpoint(model, x.to(dtype=dtype), modes, args.batch_size,
                        step, args.run, out_dir, with_sanity=first)
+        if args.input_walsh:
+            run_input_walsh_checkpoint(model, step, args.run, iw_dir, modes=modes,
+                                       with_sanity=first)
         first = False
         del model
 
@@ -244,6 +253,9 @@ def main() -> None:
         print(f"[final] step={step}")
         run_checkpoint(model, x.to(dtype=dtype), modes, args.batch_size,
                        step, args.run, out_dir, with_sanity=first)
+        if args.input_walsh:
+            run_input_walsh_checkpoint(model, step, args.run, iw_dir, modes=modes,
+                                       with_sanity=first)
         del model
 
     print(f"Artifacts in: {out_dir}")
