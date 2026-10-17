@@ -39,8 +39,10 @@ RUNS_ROOT = Path(ARGS.runs_root)
 @st.cache_data(show_spinner=False, ttl=60)
 def list_runs(root: str) -> list[str]:
     root = Path(root)
+    # a run is hidden from the app (not deleted) by `touch <run>/.hide_from_streamlit`
     return sorted(d.name for d in root.iterdir()
-                  if (d / "analysis" / "neuron_walsh").is_dir())
+                  if (d / "analysis" / "neuron_walsh").is_dir()
+                  and not (d / ".hide_from_streamlit").exists())
 
 
 @st.cache_data(show_spinner=False)
