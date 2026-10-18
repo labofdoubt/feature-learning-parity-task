@@ -247,6 +247,12 @@ class TrainingConfig:
     curriculum: bool = False
     curriculum_mse_threshold: float = 0.01
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    # Re-draw the readout weights from their own RNG seed right after the model is
+    # built (every other weight and the data stay bit-identical to `seed`).
+    # readout_seed_keys restricts it to given layerwise-readout keys (block indices
+    # as strings, e.g. ["1"] = the readout after block 1); None re-draws all readouts.
+    readout_seed: int | None = None
+    readout_seed_keys: list[str] | None = None
 
 
 @dataclass

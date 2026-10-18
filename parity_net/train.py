@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import time
 import warnings
 from functools import partial
@@ -121,6 +122,31 @@ def resolve_dtype(dtype_name: str) -> torch.dtype:
     if dtype_name == "float64":
         return torch.float64
     raise ValueError("dtype must be 'float32' or 'float64'")
+
+
+def reinit_readouts(model: ParityModel, seed: int, keys: list[str] | None = None) -> list[str]:
+    """Re-draw readout weights with their own seed, leaving the global RNG stream
+    untouched. `keys` selects layerwise readouts by key; None means every readout
+    module. Returns the names of the re-initialized modules."""
+    if keys is not None and not model.config.use_layerwise_readouts:
+        raise ValueError("readout_seed_keys needs use_layerwise_readouts=True")
+    if keys is None:
+        targets = [(f"readout[{i}]", r) for i, r in enumerate(model.readout_modules())]
+    else:
+        missing = [k for k in keys if k not in model.layerwise_readouts]
+        if missing:
+            raise ValueError(f"readout_seed_keys {missing} not among layerwise readouts "
+                             f"{list(model.layerwise_readouts)}")
+        targets = [(f"layerwise_readouts[{k}]", model.layerwise_readouts[k]) for k in keys]
+    std = math.sqrt(model.config.readout_weight_variance)
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(seed)
+        for _, readout in targets:
+            with torch.no_grad():
+                readout.weight.copy_(torch.randn(readout.weight.shape, dtype=torch.float32) * std)
+                if readout.bias is not None:
+                    readout.bias.zero_()
+    return [name for name, _ in targets]
 
 
 def build_optimizer(model: ParityModel, config: OptimizerConfig) -> torch.optim.Optimizer:
@@ -500,6 +526,8 @@ def train(config: ExperimentConfig, resume_from: str | Path | None = None) -> Pa
         output_dim=len(target_names_),
         target_names_=target_names_,
     ).to(device=device, dtype=dtype)
+    if training.readout_seed is not None:
+        reinit_readouts(model, training.readout_seed, training.readout_seed_keys)
     optimizer = build_optimizer(model, training.optimizer)
 
     # Resume: load model+optimizer state from a checkpoint and continue from its

@@ -82,3 +82,5 @@ training:
     betas:
     - 0.9
     - 0.999
+  readout_seed: null
+  readout_seed_keys: null

@@ -444,5 +444,31 @@ def test_checkpoint_without_reinforce_buffers_loads():
         fresh.load_state_dict({k: v for k, v in old_state.items() if "scores" not in k})
 
 
+def test_reinit_readouts_only_touches_selected_readouts():
+    from parity_net.train import reinit_readouts
+    torch.manual_seed(0)
+    config = _config(use_layerwise_readouts=True, bottleneck_k=[2, 2, 2])
+    names = ["d2_0", "d2_1", "d4_0"]
+    a = build_model(config, output_dim=3, target_names_=names)
+    torch.manual_seed(0)
+    b = build_model(config, output_dim=3, target_names_=names)
+    before = {k: v.clone() for k, v in b.state_dict().items()}
+    rng_state = torch.random.get_rng_state()
+    done = reinit_readouts(b, seed=5, keys=["1"])
+    assert done == ["layerwise_readouts[1]"]
+    assert torch.equal(torch.random.get_rng_state(), rng_state)        # global stream untouched
+    after = b.state_dict()
+    changed = [k for k in after if not torch.equal(after[k], before[k])]
+    assert changed == ["layerwise_readouts.1.weight"]
+    assert torch.equal(a.layerwise_readouts["0"].weight, b.layerwise_readouts["0"].weight)
+    assert after["layerwise_readouts.1.weight"].std().item() == pytest.approx(math.sqrt(config.readout_weight_variance), rel=0.5)
+    # same seed -> same draw; all readouts when keys is None
+    c = build_model(config, output_dim=3, target_names_=names); reinit_readouts(c, seed=5, keys=["1"])
+    assert torch.equal(c.layerwise_readouts["1"].weight, b.layerwise_readouts["1"].weight)
+    assert len(reinit_readouts(c, seed=6)) == 2
+    with pytest.raises(ValueError):
+        reinit_readouts(c, seed=1, keys=["7"])
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
