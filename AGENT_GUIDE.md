@@ -80,6 +80,31 @@ tmux new-window -t orchestrator: -n streamlit 'export PATH=/venv/main/bin:$PATH;
 ```
 Bound to `127.0.0.1` deliberately — access is through the SSH tunnel only. The run list refreshes on a 60 s TTL, so a freshly analyzed run appears on browser refresh without restarting the app. Per-checkpoint artifacts are cached in-process (`max_entries=8`); if you *regenerate* artifacts for a run someone already has open, restart the app (kill the tmux window, relaunch) to drop stale caches. If the page stops loading locally, the app is usually fine — it's the SSH tunnel that died; re-establish it (a self-reconnecting loop `while true; do ssh -N -L 8501:127.0.0.1:8501 ...; sleep 5; done` survives flaky links).
 
+### Preserving the TensorBoard / Streamlit view across boxes
+
+The apps read only light artifacts (`tb_logs/`, `analysis/` incl. `neuron_walsh/`,
+`metrics.csv`, `config.yaml`), which the light watcher already copies to Drive. What
+the watcher does NOT carry is the *view state*: the `.hide_from_streamlit` markers,
+`runs/.streamlit_order`, and which runs had their event logs deleted. Before stopping
+a box, snapshot it and push the snapshot next to the runs:
+
+```bash
+python3 scripts/save_tb_streamlit_state.py runs state/tb_streamlit_state.json
+cp runs/.streamlit_order state/streamlit_order.txt
+rclone copy state gdrive:parity/runs_<machine>/_state/
+```
+
+On a new box (after the normal bootstrap), rebuild exactly that view from Drive:
+
+```bash
+bash scripts/restore_tb_streamlit_state.sh gdrive:parity/runs_<machine> /root/parity/runs --launch
+```
+
+It downloads the light artifacts per run (event logs only for runs that were visible),
+recreates markers and the order file, and launches TensorBoard on 8081 and Streamlit on
+8501. Add `--final-checkpoints` / `--all-checkpoints` if analyses need to be re-run.
+Streamlit also needs `pip install streamlit plotly`.
+
 ## 5. Google Drive sync
 
 Two layers: auth (once, by the user) and standing watchers (per machine). Chains do **not** push — the watchers own all syncing, so the GPU hands off to the next queued run the moment analysis finishes instead of blocking on a multi-GB upload. Everything funnels through `scripts/backup_runs.sh`, which wraps `rclone copy` with an allowlist filter. Tiers:

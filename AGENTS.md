@@ -26,6 +26,7 @@ Remote setup should be idempotent: inspect existing sessions/services first, reu
 - The light allowlist includes configs, metrics, TensorBoard logs, plots, `analysis/`, `results.pdf`, and saved train/test data. New artifact types can be silently omitted; update the filter deliberately if a new important output is introduced. `eval_uniform.pt` is intentionally regenerated rather than backed up.
 - Before deleting intermediate checkpoints, run an all-checkpoints backup and require successful verification. Never clean a run that lacks `checkpoints/final.pt`. Because uploads use `copy`, deleting locally does not delete Drive copies.
 - Deploy edits to a live sync script by copying to a temporary remote filename and moving it over the target. Never overwrite an executing bash script in place.
+- Before stopping a box, snapshot the TensorBoard/Streamlit view with `scripts/save_tb_streamlit_state.py` and push it to `<REMOTE_ROOT>/_state/`; rebuild it elsewhere with `scripts/restore_tb_streamlit_state.sh` (details in `AGENT_GUIDE.md`).
 
 ## Running experiments and analysis
 
