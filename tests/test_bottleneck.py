@@ -491,5 +491,17 @@ def test_reinit_bottleneck_weights_only_touches_encoder_decoder():
         assert torch.equal(m2.blocks[0].bottleneck.encoder.weight, m.blocks[0].bottleneck.encoder.weight)
 
 
+def test_non_power_of_two_relevant_dim_gets_full_parity_root():
+    from parity_net.data import tree_parity_specs, labels_from_inputs
+    specs = tree_parity_specs(34, exclude_targets=["d2", "d4", "d8", "d16", "d32"])
+    assert [s.name for s in specs] == ["d34_0"] and specs[0].indices == tuple(range(34))
+    assert [s.name for s in tree_parity_specs(34, exclude_targets=["d4", "d8", "d16", "d32"])][-1] == "d34_0"
+    assert [s.name for s in tree_parity_specs(16)][-1] == "d16_0"           # power of two: unchanged
+    assert "d34_0" not in [s.name for s in tree_parity_specs(34, exclude_targets=["d4", "d8", "d16", "d32", "d34"])]
+    x = torch.randint(0, 2, (50, 34)).float() * 2 - 1
+    y = labels_from_inputs(x, 34, ["d2", "d4", "d8", "d16", "d32"])
+    assert torch.allclose(y[:, 0], x.prod(dim=1))
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

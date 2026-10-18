@@ -103,6 +103,13 @@ def tree_parity_specs(
             if not _target_is_excluded(spec, exclude_targets):
                 specs.append(spec)
         degree *= 2
+    if relevant_dim & (relevant_dim - 1):
+        # Not a power of two: the power-of-two tree never reaches the root, so the
+        # full parity of all relevant bits is added as the root target d{k}_0.
+        root = TargetSpec(name=f"d{relevant_dim}_0", degree=relevant_dim,
+                          indices=tuple(range(relevant_dim)))
+        if (max_degree is None or relevant_dim <= max_degree) and not _target_is_excluded(root, exclude_targets):
+            specs.append(root)
     if not specs:
         raise ValueError("Task has no targets after applying exclude_targets")
     return specs
