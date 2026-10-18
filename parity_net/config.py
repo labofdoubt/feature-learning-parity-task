@@ -253,6 +253,10 @@ class TrainingConfig:
     # as strings, e.g. ["1"] = the readout after block 1); None re-draws all readouts.
     readout_seed: int | None = None
     readout_seed_keys: list[str] | None = None
+    # Likewise re-draw every bottleneck's encoder and decoder weights (MD direction
+    # or plain weights, with their configured init) from this seed; selection
+    # scores and everything else stay bit-identical to `seed`.
+    bottleneck_seed: int | None = None
 
 
 @dataclass

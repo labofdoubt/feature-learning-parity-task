@@ -149,6 +149,32 @@ def reinit_readouts(model: ParityModel, seed: int, keys: list[str] | None = None
     return [name for name, _ in targets]
 
 
+def reinit_bottleneck_weights(model: ParityModel, seed: int) -> int:
+    """Re-draw the encoder/decoder weights of every bottleneck from `seed` with the
+    same init rule as construction (MD: N(0, 1/N) direction projected to c_f, gains
+    reset to 1; plain: the configured variances). Scores and biases untouched.
+    Leaves the global RNG stream untouched. Returns the number of bottlenecks."""
+    from .model import MDLinear, RAW_GAIN_ONE
+    cfg = model.config
+    bottlenecks = model.bottleneck_modules()
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(seed)
+        for bn in bottlenecks:
+            for name, lin in (("encoder", bn.encoder), ("decoder", bn.decoder)):
+                with torch.no_grad():
+                    if isinstance(lin, MDLinear):
+                        lin.direction.copy_(torch.randn(lin.direction.shape) / math.sqrt(cfg.N))
+                        lin.project_()
+                        lin.raw_gain_row.fill_(RAW_GAIN_ONE); lin.raw_gain_col.fill_(RAW_GAIN_ONE)
+                    else:
+                        if name == "encoder":
+                            var = 1.0 / cfg.N if cfg.bottleneck_encoder_weight_variance is None else cfg.bottleneck_encoder_weight_variance
+                        else:
+                            var = 1.0 / bn.k if cfg.bottleneck_decoder_weight_variance is None else cfg.bottleneck_decoder_weight_variance
+                        lin.weight.copy_(torch.randn(lin.weight.shape) * math.sqrt(var))
+    return len(bottlenecks)
+
+
 def build_optimizer(model: ParityModel, config: OptimizerConfig) -> torch.optim.Optimizer:
     param_groups = []
     group_specs = [
@@ -528,6 +554,8 @@ def train(config: ExperimentConfig, resume_from: str | Path | None = None) -> Pa
     ).to(device=device, dtype=dtype)
     if training.readout_seed is not None:
         reinit_readouts(model, training.readout_seed, training.readout_seed_keys)
+    if training.bottleneck_seed is not None:
+        reinit_bottleneck_weights(model, training.bottleneck_seed)
     optimizer = build_optimizer(model, training.optimizer)
 
     # Resume: load model+optimizer state from a checkpoint and continue from its

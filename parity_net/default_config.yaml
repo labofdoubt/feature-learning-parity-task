@@ -84,3 +84,4 @@ training:
     - 0.999
   readout_seed: null
   readout_seed_keys: null
+  bottleneck_seed: null

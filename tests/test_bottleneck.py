@@ -470,5 +470,26 @@ def test_reinit_readouts_only_touches_selected_readouts():
         reinit_readouts(c, seed=1, keys=["7"])
 
 
+def test_reinit_bottleneck_weights_only_touches_encoder_decoder():
+    from parity_net.train import reinit_bottleneck_weights
+    for md in (False, True):
+        torch.manual_seed(0)
+        config = _config(bottleneck_selection="scores", bottleneck_md_decouple=md, bottleneck_k=[2, 2, 2])
+        m = build_model(config, output_dim=3)
+        before = {k: v.clone() for k, v in m.state_dict().items()}
+        state = torch.random.get_rng_state()
+        assert reinit_bottleneck_weights(m, seed=3) == 3
+        assert torch.equal(torch.random.get_rng_state(), state)
+        after = m.state_dict()
+        changed = sorted(k for k in after if not torch.equal(after[k], before[k]))
+        want = "direction" if md else "weight"
+        assert changed == sorted(f"blocks.{b}.bottleneck.{e}.{want}" for b in range(3) for e in ("encoder", "decoder"))
+        if md:
+            for b in m.blocks:
+                assert b.bottleneck.encoder.direction.norm().item() == pytest.approx(float(b.bottleneck.encoder.c_f), rel=1e-6)
+        m2 = build_model(config, output_dim=3); reinit_bottleneck_weights(m2, seed=3)
+        assert torch.equal(m2.blocks[0].bottleneck.encoder.weight, m.blocks[0].bottleneck.encoder.weight)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
