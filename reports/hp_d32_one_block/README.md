@@ -16,3 +16,9 @@ Each panel: test (blue) and train (orange) MSE vs step, log scale; rows = wd, co
 Run names on germany / Drive (`gdrive:parity/runs_germany`): `hp_d32_<family>_lr<lr>_wd<wd>`
 and `hp_d32relu_<family>_lr<lr>_wd<wd>` with family ∈ {var1N, ro1N2, ro1N2_emb1d}.
 Figures produced by `scripts/plot_hp_grid.py`.
+
+## 8xd4 + d32 trained simultaneously (lr 1e-3, half-tanh, seed 1, 500k steps)
+
+`cap_8xd4_d32_L{1,2}_{var1N,ro1N2_emb1d}.png`: upper panel d4 test MSE, lower panel d32 test MSE,
+for wd 1e-3 and 1e-4; one figure per (number of blocks, init family). Runs: `cap_8xd4_d32_L<L>_<family>_wd<wd>`.
+Figures by `scripts/plot_d4_d32_curves.py`.
