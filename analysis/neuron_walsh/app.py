@@ -151,8 +151,10 @@ rep = st.sidebar.radio("Coefficient representation",
                         "Fraction of neuron tracked power"],
                        index=0)
 order_ref = st.sidebar.radio("Neuron ordering reference",
-                             ["fixed neuron index", "current checkpoint",
-                              "final checkpoint"], index=0)
+                             ["current checkpoint", "final checkpoint",
+                              "fixed neuron index"], index=0,
+                             help="which checkpoint's coefficients define the grouping and "
+                                  "sorting; 'current' re-groups at every step")
 min_power = st.sidebar.number_input("Noise floor: min neuron tracked power",
                                     value=1e-8, format="%.1e")
 log_color = st.sidebar.checkbox("log10 color scale for heatmaps", value=False,
