@@ -36,8 +36,8 @@ def panel(ax, art, block, floor, mult, log_floor):
     g = M.highest_degree_mode(C, np.array([m["degree"] for m in modes]), thr)
     order = np.lexsort((-P[g, np.arange(N)], g))
     Z = np.log10(np.maximum(P[:, order], log_floor))
-    im = ax.imshow(Z, aspect="auto", cmap="viridis", interpolation="nearest")
-    ax.set_yticks(range(len(names))); ax.set_yticklabels(names, fontsize=7)
+    im = ax.imshow(Z, aspect="auto", cmap="viridis", interpolation="nearest", origin="lower")
+    ax.set_yticks(range(len(names))); ax.set_yticklabels(names, fontsize=7)   # d2_0 at the bottom, d16_0 on top
     ax.set_xlabel("neuron (sorted)")
     counts = np.bincount(g, minlength=len(names))
     ax.set_title(f"block_{block}/nonlinearity_0 @ step {art['step']}  "
