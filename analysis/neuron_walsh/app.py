@@ -453,9 +453,10 @@ with tabs[2]:
         bw_block = c1.selectbox("Bottleneck (after block)", bw_blocks,
                                 index=bw_blocks.index(loc["block"]) if loc["block"] in bw_blocks else 0,
                                 key="bw_block")
-        stage = c2.radio("Stage", ["pre-TopK (every code neuron)",
-                                   "post-TopK (what passes through)"],
-                         horizontal=True, key="bw_stage")
+        stage_opts = ["pre-TopK (every code neuron)", "post-TopK (what passes through)"]
+        if "C_out" in bw_all["bottlenecks"][bw_blocks[0]]:
+            stage_opts.append("post-decoder (stream to the next block)")
+        stage = c2.radio("Stage", stage_opts, horizontal=True, key="bw_stage")
         bw_degrees = c3.multiselect("Mode degrees", sorted({m["degree"] for m in bw_modes_all}),
                                     default=sorted({m["degree"] for m in bw_modes_all}),
                                     key="bw_degrees")
@@ -468,9 +469,14 @@ with tabs[2]:
         bw_names = [m["name"] for m in bw_sel]
         bw_degs = np.array([m["degree"] for m in bw_sel])
         pre = stage.startswith("pre")
-        Cb = (bw["C_pre"] if pre else bw["C_post"])[bw_idx]          # [M, d]
-        varb = bw["var_pre"] if pre else bw["var_post"]
-        freq = bw["select_freq"]
+        decoder_stage = stage.startswith("post-decoder")
+        if decoder_stage:
+            Cb, varb = bw["C_out"][bw_idx], bw["var_out"]              # [M, N] residual coordinates
+            freq = bw["var_out"]                                       # "activity" = variance
+        else:
+            Cb = (bw["C_pre"] if pre else bw["C_post"])[bw_idx]      # [M, d]
+            varb = bw["var_pre"] if pre else bw["var_post"]
+            freq = bw["select_freq"]
         d_b = Cb.shape[1]
         Pb = Cb ** 2
         totb = Pb.sum(0)
@@ -479,8 +485,9 @@ with tabs[2]:
         bw_sort = c4.selectbox("Neuron sorting", [
             "highest-degree mode produced", "dominant mode", "selection frequency",
             "original neuron index"], key="bw_sort")
-        keep_n = c5.number_input("keep most active (0 = all)", 0, d_b, 64, step=8,
-                                 key="bw_keep")
+        keep_n = c5.number_input("keep most active (0 = all)" if not decoder_stage
+                                 else "keep highest-variance coordinates (0 = all)",
+                                 0, d_b, 0 if decoder_stage else 64, step=8, key="bw_keep")
         bw_floor = c6.number_input("produced-mode floor: min a²", value=1e-6, format="%.1e",
                                    key="bw_floor")
         bw_mult = c7.number_input("× sampling noise σ²/n", value=10.0, min_value=0.0,
@@ -513,22 +520,25 @@ with tabs[2]:
         Zshow, zl = heat_values(Zb[:, nordb], zl)
         fig = go.Figure(go.Heatmap(
             z=Zshow, y=bw_names, x=np.arange(len(nordb)), customdata=cdb,
-            hovertemplate=("code neuron %{customdata[0]:.0f}<br>mode %{y}<br>" + zl +
-                           " %{z:.3e}<br>selected %{customdata[1]:.3f} of inputs · "
+            hovertemplate=(("residual coordinate" if decoder_stage else "code neuron") +
+                           " %{customdata[0]:.0f}<br>mode %{y}<br>" + zl + " %{z:.3e}<br>" +
+                           ("" if decoder_stage else "selected %{customdata[1]:.3f} of inputs · ") +
                            "tracked power %{customdata[2]:.3e} · var %{customdata[3]:.3e}"),
             colorscale="Viridis", colorbar=dict(title=zl)))
         fig.update_layout(height=max(420, 90 + 22 * len(bw_sel)),
                           margin=dict(l=10, r=10, t=25, b=10),
-                          xaxis_title="code neuron (sorted position — hover for id)",
+                          xaxis_title=("residual coordinate" if decoder_stage else "code neuron")
+                                      + " (sorted position — hover for id)",
                           yaxis_title="mode")
         st.plotly_chart(fig, use_container_width=True)
-        n_active = int((freq > 0).sum())
+        n_active = int((bw["select_freq"] > 0).sum())
         st.caption(
             f"bottleneck after block {bw_block} (d={bw['dim']}, K={bw['k']}, "
             f"{'Abs' if bw['abs_topk'] else 'signed '}TopK) @ step {step}: "
-            f"{len(nordb)}/{d_b} code neurons shown ({n_active} are ever selected, "
-            f"{int((freq > 0.01).sum())} on >1% of inputs). Coefficients of the "
-            f"{'encoder output before TopK' if pre else 'sparse code after TopK'} on "
+            f"{len(nordb)}/{d_b} {'residual coordinates' if decoder_stage else 'code neurons'} shown "
+            f"({n_active} code neurons are ever selected, "
+            f"{int((bw['select_freq'] > 0.01).sum())} on >1% of inputs). Coefficients of the "
+            f"{'decoder output W_dec·code, i.e. the stream the next block receives' if decoder_stage else ('encoder output before TopK' if pre else 'sparse code after TopK')} on "
             f"{len(bw_sel)} tracked modes, uniform data. Sorting: as in Overview, over the "
             f"stage shown; 'keep most active' ranks by selection frequency first.")
 

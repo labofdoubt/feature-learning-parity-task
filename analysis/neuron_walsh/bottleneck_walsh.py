@@ -6,6 +6,8 @@ stream right after the residual addition, h_b^+(x). Three tensors are analysed
 on the uniform eval set, each [n, d_bottleneck]:
     pre  = W_enc h_b^+ (+ bias)       every code neuron BEFORE TopK
     post = TopK(pre)                   the sparse code that passes through
+    out  = W_dec post (+ bias)         the residual stream handed to the next
+                                       block (one row per residual coordinate)
 and for each the Walsh coefficients on the tracked modes (tree targets plus
 the degree-1 singletons), C[S, j] = E[code_j(x) chi_S(x)], the per-neuron
 mean/variance, and the layer-level Walsh power of the decoder output
@@ -62,6 +64,8 @@ def compute_bottlenecks(model, x: torch.Tensor, modes: list[dict], batch_size: i
             S2_post=torch.zeros(d, dtype=torch.float64, device=dev),
             sel=torch.zeros(d, dtype=torch.float64, device=dev),
             V_out=torch.zeros(M, model.config.N, dtype=torch.float64, device=dev),
+            S1_out=torch.zeros(model.config.N, dtype=torch.float64, device=dev),
+            S2_out=torch.zeros(model.config.N, dtype=torch.float64, device=dev),
         )
     for start in range(0, n_total, batch_size):
         xb = x[start:start + batch_size]
@@ -83,7 +87,9 @@ def compute_bottlenecks(model, x: torch.Tensor, modes: list[dict], batch_size: i
             a["S1_pre"] += pre64.sum(0); a["S2_pre"] += (pre64 * pre64).sum(0)
             a["S1_post"] += post64.sum(0); a["S2_post"] += (post64 * post64).sum(0)
             a["sel"] += (post != 0).double().sum(0)
-            a["V_out"] += Xw.t() @ out.double()
+            out64 = out.double()
+            a["V_out"] += Xw.t() @ out64
+            a["S1_out"] += out64.sum(0); a["S2_out"] += (out64 * out64).sum(0)
             h = out
     results = []
     for l, bn in bns:
@@ -94,6 +100,7 @@ def compute_bottlenecks(model, x: torch.Tensor, modes: list[dict], batch_size: i
             return mean, var
         mean_pre, var_pre = stats(a["S1_pre"], a["S2_pre"])
         mean_post, var_post = stats(a["S1_post"], a["S2_post"])
+        mean_out, var_out = stats(a["S1_out"], a["S2_out"])
         results.append(dict(
             block=l, name=f"block_{l}/bottleneck", dim=bn.dim, k=bn.k, abs_topk=bn.abs_topk,
             C_pre=(a["C_pre"] / n_total).float().cpu(),
@@ -101,7 +108,9 @@ def compute_bottlenecks(model, x: torch.Tensor, modes: list[dict], batch_size: i
             mean_pre=mean_pre.float().cpu(), var_pre=var_pre.float().cpu(),
             mean_post=mean_post.float().cpu(), var_post=var_post.float().cpu(),
             select_freq=(a["sel"] / n_total).float().cpu(),
-            # layer-level Walsh power of the decoder output, per mode [M]
+            # decoder output per residual coordinate [M, N], and its layer power [M]
+            C_out=(a["V_out"] / n_total).float().cpu(),
+            mean_out=mean_out.float().cpu(), var_out=var_out.float().cpu(),
             output_power=(a["V_out"] / n_total).square().sum(dim=1).cpu(),
         ))
     return results
