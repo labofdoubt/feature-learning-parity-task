@@ -257,6 +257,10 @@ class TrainingConfig:
     # or plain weights, with their configured init) from this seed; selection
     # scores and everything else stay bit-identical to `seed`.
     bottleneck_seed: int | None = None
+    # Residual blocks (0-based) whose parameters, bottleneck included, are frozen for
+    # this training stage: requires_grad=False, so they are left out of the optimizer.
+    # Resume with a different list to unfreeze; the optimizer state is then rebuilt.
+    freeze_blocks: list[int] | None = None
 
 
 @dataclass

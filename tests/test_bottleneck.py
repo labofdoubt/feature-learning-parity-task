@@ -503,5 +503,24 @@ def test_non_power_of_two_relevant_dim_gets_full_parity_root():
     assert torch.allclose(y[:, 0], x.prod(dim=1))
 
 
+def test_freeze_blocks_excludes_block_from_optimizer():
+    config = _config(bottleneck_k=[2, 2, 2])
+    model = build_model(config, output_dim=3)
+    for p in model.blocks[1].parameters():
+        p.requires_grad_(False)
+    opt = build_optimizer(model, OptimizerConfig(lr=1e-3))
+    ids = {id(p) for g in opt.param_groups for p in g["params"]}
+    assert all(id(p) not in ids for p in model.blocks[1].parameters())
+    assert all(id(p) in ids for p in model.blocks[0].parameters())
+    assert all(id(p) in ids for p in model.blocks[2].bottleneck.parameters())
+    x = torch.randint(0, 2, (8, 8)).float() * 2 - 1
+    model(x).square().sum().backward()
+    assert model.blocks[1].linear.weight.grad is None and model.blocks[0].linear.weight.grad is not None
+    # optimizer state from the frozen stage cannot be loaded into the unfrozen optimizer
+    full = build_optimizer(build_model(config, output_dim=3), OptimizerConfig(lr=1e-3))
+    with pytest.raises(ValueError):
+        full.load_state_dict(opt.state_dict())
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

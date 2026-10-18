@@ -21,6 +21,7 @@ def main() -> None:
     ap.add_argument("--labels", nargs="+", required=True)
     ap.add_argument("--title", default="")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--vline", type=float, default=None, help="mark a step (e.g. a stage boundary)")
     args = ap.parse_args()
     fig, axes = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
     for run, label in zip(args.runs, args.labels):
@@ -33,6 +34,8 @@ def main() -> None:
                             label=f"{label}: test {m.iloc[-1][f'test_mse_{deg}']:.3g} @ {int(m.iloc[-1]['step']) // 1000}k")
             # train per-degree losses are not in metrics.csv; show total train MSE faintly on the d32 panel only
     for ax, deg in zip(axes, ("d4", "d32")):
+        if args.vline is not None:
+            ax.axvline(args.vline, color="gray", ls="--", lw=1)
         ax.set_yscale("log"); ax.set_ylim(1e-6, 1.5); ax.grid(alpha=0.3); ax.set_ylabel(f"test MSE {deg}"); ax.legend(fontsize=9)
     axes[1].set_xlabel("step")
     fig.suptitle(args.title, fontsize=11); fig.tight_layout(); fig.savefig(args.out, dpi=130); print(args.out)

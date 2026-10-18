@@ -556,6 +556,13 @@ def train(config: ExperimentConfig, resume_from: str | Path | None = None) -> Pa
         reinit_readouts(model, training.readout_seed, training.readout_seed_keys)
     if training.bottleneck_seed is not None:
         reinit_bottleneck_weights(model, training.bottleneck_seed)
+    if training.freeze_blocks:
+        for b in training.freeze_blocks:
+            if not 0 <= b < len(model.blocks):
+                raise ValueError(f"freeze_blocks entry {b} out of range for L={len(model.blocks)}")
+            for p in model.blocks[b].parameters():
+                p.requires_grad_(False)
+        print(f"Frozen blocks: {sorted(training.freeze_blocks)}")
     optimizer = build_optimizer(model, training.optimizer)
 
     # Resume: load model+optimizer state from a checkpoint and continue from its
@@ -567,7 +574,17 @@ def train(config: ExperimentConfig, resume_from: str | Path | None = None) -> Pa
         payload = torch.load(resume_from, map_location=device)
         load_model_state(model, payload["model_state"])
         if payload.get("optimizer_state") is not None:
-            optimizer.load_state_dict(payload["optimizer_state"])
+            try:
+                optimizer.load_state_dict(payload["optimizer_state"])
+            except ValueError as exc:
+                # The trainable set changed between stages (e.g. freeze_blocks differs),
+                # so the saved groups do not match; continue with fresh optimizer state.
+                warnings.warn(
+                    f"optimizer state not loaded ({exc}); continuing with fresh optimizer "
+                    "state (momentum restarts)",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         start_step = int(payload["step"])
         if start_step >= training.num_steps:
             raise ValueError(
