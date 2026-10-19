@@ -11,8 +11,16 @@ import yaml
 class Rank1Config:
     # ---- task: inputs are the d singleton modes x_1..x_d plus their product; target = product
     d: int = 16
-    # False removes the product mode from the input: phi(x) = (x_1..x_d) only, embedding d x d_hid
+    # Input modes (Walsh characters) fed to the embedding. A named set:
+    #   "singletons+product"  x_1..x_d and prod_i x_i            (d+1 modes, the original setup)
+    #   "singletons"          x_1..x_d only
+    #   "singletons+pairs"    x_1..x_d and the adjacent pairs x_1x_2, x_3x_4, ...   (d + d/2 modes)
+    # or an explicit list of supports as 0-based index lists, e.g. [[0],[1],[0,1]].
+    input_modes: str | list = "singletons+product"
+    # Deprecated alias: False is the same as input_modes = "singletons".
     include_product_input: bool = True
+    # Number of bottleneck directions K: code s = W_enc h in R^K, b = W_dec s.
+    bottleneck_k: int = 1
     # ---- model
     d_hid: int = 1024
     embedding_variance: float | None = None      # None -> 1 / d_hid
@@ -45,6 +53,40 @@ class Rank1Config:
     def __post_init__(self) -> None:
         if self.enc_init not in ("random", "linear_sum", "product", "random_no_product"):
             raise ValueError(f"enc_init must be random, linear_sum, product or random_no_product, got {self.enc_init!r}")
+        if not self.include_product_input and self.input_modes == "singletons+product":
+            self.input_modes = "singletons"
+        if self.bottleneck_k < 1:
+            raise ValueError("bottleneck_k must be >= 1")
+        self.mode_supports()  # validates
+
+    def mode_supports(self) -> list[tuple[int, ...]]:
+        """The input modes as tuples of 0-based bit indices, in embedding-row order."""
+        d = self.d
+        if isinstance(self.input_modes, str):
+            singles = [(i,) for i in range(d)]
+            if self.input_modes == "singletons":
+                return singles
+            if self.input_modes == "singletons+product":
+                return singles + [tuple(range(d))]
+            if self.input_modes == "singletons+pairs":
+                if d % 2:
+                    raise ValueError("singletons+pairs needs even d")
+                return singles + [(i, i + 1) for i in range(0, d, 2)]
+            raise ValueError(f"unknown input_modes {self.input_modes!r}")
+        supports = [tuple(int(i) for i in m) for m in self.input_modes]
+        for m in supports:
+            if not m or any(i < 0 or i >= d for i in m) or len(set(m)) != len(m):
+                raise ValueError(f"bad mode support {m} for d={d}")
+        return supports
+
+    def mode_names(self) -> list[str]:
+        return ["".join(f"x{i + 1}" for i in m) if len(m) < self.d else "product" for m in self.mode_supports()]
+
+    def product_mode_index(self) -> int | None:
+        """Row of the full-product mode in the embedding, or None if it is not an input."""
+        full = tuple(range(self.d))
+        sup = self.mode_supports()
+        return sup.index(full) if full in sup else None
         if not -1.0 <= self.enc_cosine <= 1.0:
             raise ValueError("enc_cosine must be in [-1, 1]")
         if self.d < 1 or self.d_hid < 1:
