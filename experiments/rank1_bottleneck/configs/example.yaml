@@ -1,0 +1,20 @@
+# Rank-1 bottleneck experiment: d singletons + product in, product out, one-direction bottleneck.
+d: 16
+d_hid: 1024
+embedding_variance: null      # null -> 1/d_hid
+hidden_variance: null         # null -> 1/d_hid
+readout_variance: null        # null -> 1/d_hid
+bottleneck_variance: null     # null -> 1/d_hid
+enc_init: random              # random | linear_sum | product
+enc_cosine: 1.0               # cosine of w_enc with the chosen direction (ignored for random)
+lr: 0.001
+weight_decay: 0.001
+momentum: 0.9
+num_steps: 100000
+batch_size: 512
+test_samples: 65536
+validate_every: 1000
+checkpoint_every: 10000
+seed: 0
+device: auto
+output_dir: /root/parity/runs/rank1_d16_random_wd1e-3
