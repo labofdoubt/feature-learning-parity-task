@@ -68,6 +68,18 @@ def bottleneck_stats(model: Rank1BottleneckNet) -> dict[str, float]:
     out["bottleneck/product_fraction"] = out["bottleneck/power_product"] / total
     for i in singles:
         out[f"bottleneck/coef_{names[i]}"] = float(C[0, i])
+    # the same decomposition one step later: what reaches the nonlinearity (summed over units)
+    pp = model.preact_mode_power(); ptot = float(pp.sum()) + 1e-30
+    for i, n in enumerate(names):
+        out[f"preact/power_{n}"] = float(pp[i])
+    for deg in degrees:
+        idx = [i for i, m in enumerate(supports) if len(m) == deg]
+        out[f"preact/power_degree{deg}"] = float(pp[idx].sum())
+        out[f"preact/fraction_degree{deg}"] = float(pp[idx].sum()) / ptot
+    # per-unit dominance: fraction of units whose largest pre-activation coefficient is a degree-2 mode
+    Cp = model.preact_coefficients() ** 2
+    deg_of = torch.tensor([len(m) for m in supports], device=Cp.device)
+    out["preact/units_dominated_by_degree2"] = float((deg_of[Cp.argmax(1)] == 2).float().mean())
     out["bottleneck/cos_enc_product"] = model.enc_cosine_to("product")
     out["bottleneck/cos_enc_linear_sum"] = model.enc_cosine_to("linear_sum")
     out["norms/W_enc"] = float(model.W_enc.norm()); out["norms/W_dec"] = float(model.W_dec.norm())

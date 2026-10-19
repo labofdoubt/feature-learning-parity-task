@@ -122,6 +122,23 @@ def test_embedding_scale_by_degree():
     assert n2 == pytest.approx(1.0, rel=0.1)          # degree-2 rows keep the standard norm sqrt(d_hid/d_hid)
 
 
+def test_no_bottleneck_and_preact_coefficients():
+    torch.manual_seed(0)
+    cfg = Rank1Config(d=4, d_hid=32, input_modes="singletons+pairs", use_bottleneck=False)
+    m = Rank1BottleneckNet(cfg)
+    x = make_test_set(cfg, torch.device("cpu"))
+    y, parts = m(x, return_parts=True)
+    assert parts["code"].shape == (16, 0) and torch.allclose(parts["bottleneck_out"], parts["h"])
+    z = m.linear(parts["h"])                                   # pre-activations, (16, 32)
+    direct = (z.t() @ features(x, m.supports) / 16)             # (32, 6) exact Walsh coefficients
+    assert torch.allclose(direct, m.preact_coefficients(), atol=1e-5)
+    # with a bottleneck the same identity holds through W_dec W_enc
+    cfg2 = Rank1Config(d=4, d_hid=32, input_modes="singletons+pairs", bottleneck_k=2)
+    m2 = Rank1BottleneckNet(cfg2); x2 = make_test_set(cfg2, torch.device("cpu"))
+    z2 = m2.linear(m2(x2, return_parts=True)[1]["bottleneck_out"])
+    assert torch.allclose(z2.t() @ features(x2, m2.supports) / 16, m2.preact_coefficients(), atol=1e-5)
+
+
 def test_test_set_enumerates_all_inputs():
     x = make_test_set(Rank1Config(d=5), torch.device("cpu"))
     assert x.shape == (32, 5) and torch.unique(x, dim=0).shape[0] == 32

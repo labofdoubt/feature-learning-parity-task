@@ -86,8 +86,11 @@ class Rank1BottleneckNet(nn.Module):
 
     def forward(self, x: torch.Tensor, *, return_parts: bool = False):
         h = self.embed(x)
-        s = h @ self.W_enc.t()                                    # (batch, K) bottleneck code
-        b = s @ self.W_dec.t()                                    # (batch, N)
+        if self.cfg.use_bottleneck:
+            s = h @ self.W_enc.t()                                # (batch, K) bottleneck code
+            b = s @ self.W_dec.t()                                # (batch, N)
+        else:
+            s, b = h.new_zeros(h.shape[0], 0), h                  # no bottleneck: the layer reads h
         a = F.relu(self.linear(b))
         if self.cfg.residual_after_bottleneck:
             a = b + a
@@ -113,6 +116,21 @@ class Rank1BottleneckNet(nn.Module):
         """Power each input mode carries through the bottleneck, summed over the K
         directions: p_m = sum_k C[k, m]^2, shape (M,)."""
         return (self.code_coefficients() ** 2).sum(0)
+
+    @torch.no_grad()
+    def preact_coefficients(self) -> torch.Tensor:
+        """Walsh coefficients of every hidden unit's PRE-activation z = W b on every input
+        mode: (N, M). Exact, since z is linear in the mode features: W (W_dec W_enc) V^T,
+        or W V^T without the bottleneck."""
+        T = self.embedding.t()                                     # (N, M): columns = v_m
+        if self.cfg.use_bottleneck:
+            T = self.W_dec @ (self.W_enc @ T)
+        return self.linear.weight @ T
+
+    @torch.no_grad()
+    def preact_mode_power(self) -> torch.Tensor:
+        """Power each input mode carries into the nonlinearity, summed over hidden units."""
+        return (self.preact_coefficients() ** 2).sum(0)
 
     @torch.no_grad()
     def enc_cosines(self) -> torch.Tensor:
