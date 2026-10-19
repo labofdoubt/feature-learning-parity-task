@@ -28,6 +28,25 @@ Remote setup should be idempotent: inspect existing sessions/services first, reu
 - Deploy edits to a live sync script by copying to a temporary remote filename and moving it over the target. Never overwrite an executing bash script in place.
 - Before stopping a box, snapshot the TensorBoard/Streamlit view with `scripts/save_tb_streamlit_state.py` and push it to `<REMOTE_ROOT>/_state/`; rebuild it elsewhere with `scripts/restore_tb_streamlit_state.sh` (details in `AGENT_GUIDE.md`).
 
+## "Restore germany" (rebuilding a stopped box's TensorBoard + Streamlit view)
+
+When the user says "restore germany" (or restore <machine>), they mean: on the current SSH
+box, after the standard bootstrap above, rebuild exactly the TensorBoard and Streamlit view
+that machine had when it was stopped. The snapshot lives on Drive under that machine's
+prefix, e.g. `gdrive:parity/runs_germany/_state/`. The command is:
+
+```bash
+cd /root/parity && pip install streamlit plotly && \
+bash scripts/restore_tb_streamlit_state.sh gdrive:parity/runs_germany /root/parity/runs --launch
+```
+
+It downloads the light artifacts of every run in the manifest (event logs only where they
+were visible), recreates `.hide_from_streamlit` markers and `runs/.streamlit_order`, and
+launches TensorBoard on 8081 and Streamlit on 8501 in the `orchestrator` tmux session
+(tunnel: `ssh -L 8080:localhost:8081 -L 8501:localhost:8501`). Add `--final-checkpoints` or
+`--all-checkpoints` when analyses must be recomputed. If the new box gets its own
+`REMOTE_ROOT` for new runs, keep it distinct from `runs_germany`.
+
 ## Running experiments and analysis
 
 - Standard k=16 queue: `scripts/run_chain.sh`; hierarchical-symmetric series: `scripts/run_hsym_chain.sh`; k=32/d=64: `scripts/run_k32_chain.sh`. Use one sequential chain per GPU unless the user explicitly chooses otherwise.
