@@ -22,3 +22,8 @@ Figures produced by `scripts/plot_hp_grid.py`.
 `cap_8xd4_d32_L{1,2}_{var1N,ro1N2_emb1d}.png`: upper panel d4 test MSE, lower panel d32 test MSE,
 for wd 1e-3 and 1e-4; one figure per (number of blocks, init family). Runs: `cap_8xd4_d32_L<L>_<family>_wd<wd>`.
 Figures by `scripts/plot_d4_d32_curves.py`.
+
+`cap_8xd4_d32_L2_var1N_twostage.png`: same setup (L=2, all init 1/N, lr 1e-3, wd 1e-4) trained in two
+stages, block 1 frozen (`training.freeze_blocks: [1]`) for 200k steps, then unfrozen and resumed to 700k,
+against the one-stage run. Run: `cap_8xd4_d32_L2_var1N_wd1e-4_twostage` (configs `config_stage1.yaml`,
+`config_stage2.yaml`).
