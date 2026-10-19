@@ -113,6 +113,15 @@ def test_residual_after_bottleneck():
     assert torch.allclose(parts["hidden"], expected) and torch.allclose(y, m.readout(expected).squeeze(1))
 
 
+def test_embedding_scale_by_degree():
+    torch.manual_seed(0)
+    cfg = Rank1Config(d=4, d_hid=512, input_modes="singletons+pairs", embedding_scale_by_degree={1: 3.0})
+    m = Rank1BottleneckNet(cfg)
+    n1 = m.embedding[:4].norm(dim=1).mean().item(); n2 = m.embedding[4:].norm(dim=1).mean().item()
+    assert n1 / n2 == pytest.approx(3.0, rel=0.1)
+    assert n2 == pytest.approx(1.0, rel=0.1)          # degree-2 rows keep the standard norm sqrt(d_hid/d_hid)
+
+
 def test_test_set_enumerates_all_inputs():
     x = make_test_set(Rank1Config(d=5), torch.device("cpu"))
     assert x.shape == (32, 5) and torch.unique(x, dim=0).shape[0] == 32

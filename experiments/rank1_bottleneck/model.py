@@ -37,6 +37,10 @@ class Rank1BottleneckNet(nn.Module):
         self.n_modes = len(self.supports)
         self.product_idx = cfg.product_mode_index()
         self.embedding = nn.Parameter(torch.randn(self.n_modes, N) * math.sqrt(cfg.emb_var))
+        if cfg.embedding_scale_by_degree:
+            with torch.no_grad():
+                for i, m in enumerate(self.supports):
+                    self.embedding[i] *= float(cfg.embedding_scale_by_degree.get(len(m), 1.0))
         # rank-K bottleneck: K encoder directions (rows of W_enc) and K decoder columns
         self.W_enc = nn.Parameter(torch.randn(K, N) * math.sqrt(cfg.bn_var))
         self.W_dec = nn.Parameter(torch.randn(N, K) * math.sqrt(cfg.bn_var))

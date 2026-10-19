@@ -28,6 +28,10 @@ class Rank1Config:
     # ---- model
     d_hid: int = 1024
     embedding_variance: float | None = None      # None -> 1 / d_hid
+    # Multiplies the initial embedding rows of modes of the given degree, e.g. {1: 3.0}
+    # makes every singleton embedding 3x longer than the standard draw (degree-2 rows
+    # untouched), i.e. Q_1/Q_2 = 3 in norm.
+    embedding_scale_by_degree: dict | None = None
     hidden_variance: float | None = None         # linear layer W (d_hid x d_hid); None -> 1 / d_hid
     readout_variance: float | None = None        # None -> 1 / d_hid
     bottleneck_variance: float | None = None     # w_enc and w_dec entries; None -> 1 / d_hid
