@@ -11,6 +11,8 @@ import yaml
 class Rank1Config:
     # ---- task: inputs are the d singleton modes x_1..x_d plus their product; target = product
     d: int = 16
+    # False removes the product mode from the input: phi(x) = (x_1..x_d) only, embedding d x d_hid
+    include_product_input: bool = True
     # ---- model
     d_hid: int = 1024
     embedding_variance: float | None = None      # None -> 1 / d_hid

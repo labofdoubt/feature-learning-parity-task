@@ -17,8 +17,11 @@ from torch import nn
 from .config import Rank1Config
 
 
-def features(x: torch.Tensor) -> torch.Tensor:
-    """(batch, d) +-1 inputs -> (batch, d+1) modes: singletons then their product."""
+def features(x: torch.Tensor, include_product: bool = True) -> torch.Tensor:
+    """(batch, d) +-1 inputs -> (batch, d+1) modes: singletons then their product
+    (or just the d singletons when include_product is False)."""
+    if not include_product:
+        return x
     return torch.cat([x, x.prod(dim=1, keepdim=True)], dim=1)
 
 
@@ -27,7 +30,8 @@ class Rank1BottleneckNet(nn.Module):
         super().__init__()
         self.cfg = cfg
         d, N = cfg.d, cfg.d_hid
-        self.embedding = nn.Parameter(torch.randn(d + 1, N) * math.sqrt(cfg.emb_var))
+        self.n_modes = d + 1 if cfg.include_product_input else d
+        self.embedding = nn.Parameter(torch.randn(self.n_modes, N) * math.sqrt(cfg.emb_var))
         self.w_enc = nn.Parameter(torch.empty(N))
         self.w_dec = nn.Parameter(torch.randn(N) * math.sqrt(cfg.bn_var))
         self.linear = nn.Linear(N, N, bias=False)
@@ -44,6 +48,8 @@ class Rank1BottleneckNet(nn.Module):
         random = torch.randn(N)
         if cfg.enc_init == "random":
             return random * math.sqrt(cfg.bn_var)
+        if cfg.enc_init in ("product", "random_no_product") and not cfg.include_product_input:
+            raise ValueError(f"enc_init={cfg.enc_init!r} needs include_product_input=True")
         if cfg.enc_init == "random_no_product":
             vp = self.embedding[cfg.d]
             u = vp / vp.norm().clamp_min(1e-12)
@@ -56,7 +62,7 @@ class Rank1BottleneckNet(nn.Module):
         return norm * (c * u + math.sqrt(max(0.0, 1.0 - c * c)) * perp)
 
     def embed(self, x: torch.Tensor) -> torch.Tensor:
-        return features(x) @ self.embedding                       # (batch, N)
+        return features(x, self.cfg.include_product_input) @ self.embedding   # (batch, N)
 
     def forward(self, x: torch.Tensor, *, return_parts: bool = False):
         h = self.embed(x)
@@ -83,5 +89,7 @@ class Rank1BottleneckNet(nn.Module):
     @torch.no_grad()
     def enc_cosine_to(self, which: str) -> float:
         V = self.embedding
+        if which == "product" and not self.cfg.include_product_input:
+            return float("nan")
         target = V[: self.cfg.d].sum(0) if which == "linear_sum" else V[self.cfg.d]
         return float(target @ self.w_enc / (target.norm() * self.w_enc.norm() + 1e-12))

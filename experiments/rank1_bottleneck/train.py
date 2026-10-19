@@ -49,16 +49,16 @@ def evaluate(model: Rank1BottleneckNet, x: torch.Tensor, batch: int = 8192) -> d
 @torch.no_grad()
 def bottleneck_stats(model: Rank1BottleneckNet) -> dict[str, float]:
     c = model.bottleneck_coefficients()
-    d = model.cfg.d
+    d = model.cfg.d; has_prod = model.cfg.include_product_input
     out = {f"bottleneck/coef_x{i + 1}": float(c[i]) for i in range(d)}
-    out["bottleneck/coef_product"] = float(c[d])
+    out["bottleneck/coef_product"] = float(c[d]) if has_prod else 0.0
     out["bottleneck/power_linear"] = float((c[:d] ** 2).sum())
-    out["bottleneck/power_product"] = float(c[d] ** 2)
-    out["bottleneck/product_fraction"] = float(c[d] ** 2 / ((c ** 2).sum() + 1e-30))
+    out["bottleneck/power_product"] = float(c[d] ** 2) if has_prod else 0.0
+    out["bottleneck/product_fraction"] = out["bottleneck/power_product"] / (float((c ** 2).sum()) + 1e-30)
     out["bottleneck/cos_enc_product"] = model.enc_cosine_to("product")
     out["bottleneck/cos_enc_linear_sum"] = model.enc_cosine_to("linear_sum")
     out["norms/w_enc"] = float(model.w_enc.norm()); out["norms/w_dec"] = float(model.w_dec.norm())
-    out["norms/embedding_product_row"] = float(model.embedding[d].norm())
+    out["norms/embedding_product_row"] = float(model.embedding[d].norm()) if has_prod else 0.0
     out["norms/embedding_singleton_rows_mean"] = float(model.embedding[:d].norm(dim=1).mean())
     out["norms/linear"] = float(model.linear.weight.norm()); out["norms/readout"] = float(model.readout.weight.norm())
     return out

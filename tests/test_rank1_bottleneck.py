@@ -70,6 +70,17 @@ def test_init_variances_and_config_roundtrip(tmp_path):
         Rank1Config(enc_init="nope")
 
 
+def test_no_product_input():
+    torch.manual_seed(0)
+    cfg = Rank1Config(d=8, d_hid=64, include_product_input=False, enc_init="linear_sum", enc_cosine=0.7)
+    m = Rank1BottleneckNet(cfg)
+    assert m.embedding.shape == (8, 64) and features(torch.ones(3, 8), False).shape == (3, 8)
+    assert m.enc_cosine_to("linear_sum") == pytest.approx(0.7, abs=1e-5)
+    assert m(torch.ones(3, 8)).shape == (3,)
+    with pytest.raises(ValueError):
+        Rank1BottleneckNet(Rank1Config(d=8, d_hid=64, include_product_input=False, enc_init="product"))
+
+
 def test_test_set_enumerates_all_inputs():
     x = make_test_set(Rank1Config(d=5), torch.device("cpu"))
     assert x.shape == (32, 5) and torch.unique(x, dim=0).shape[0] == 32
