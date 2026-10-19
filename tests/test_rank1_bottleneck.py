@@ -103,6 +103,16 @@ def test_rank_k_bottleneck_and_pairs_modes():
         Rank1Config(d=4, input_modes=[[0, 9]])
 
 
+def test_residual_after_bottleneck():
+    torch.manual_seed(0)
+    cfg = Rank1Config(d=6, d_hid=32, bottleneck_k=2, residual_after_bottleneck=True)
+    m = Rank1BottleneckNet(cfg)
+    x = torch.randint(0, 2, (5, 6)).float() * 2 - 1
+    y, parts = m(x, return_parts=True)
+    expected = parts["bottleneck_out"] + torch.relu(m.linear(parts["bottleneck_out"]))
+    assert torch.allclose(parts["hidden"], expected) and torch.allclose(y, m.readout(expected).squeeze(1))
+
+
 def test_test_set_enumerates_all_inputs():
     x = make_test_set(Rank1Config(d=5), torch.device("cpu"))
     assert x.shape == (32, 5) and torch.unique(x, dim=0).shape[0] == 32

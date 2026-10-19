@@ -21,6 +21,10 @@ class Rank1Config:
     include_product_input: bool = True
     # Number of bottleneck directions K: code s = W_enc h in R^K, b = W_dec s.
     bottleneck_k: int = 1
+    # Residual connection around the ReLU layer after the bottleneck:
+    #   a(x) = b(x) + ReLU(W b(x))  instead of  a(x) = ReLU(W b(x)),
+    # so the readout also sees the bottleneck output directly.
+    residual_after_bottleneck: bool = False
     # ---- model
     d_hid: int = 1024
     embedding_variance: float | None = None      # None -> 1 / d_hid

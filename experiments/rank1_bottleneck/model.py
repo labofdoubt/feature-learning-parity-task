@@ -1,4 +1,5 @@
 """y(x) = r . relu( W  w_dec (w_enc . h(x)) ),   h(x) = sum_m phi_m(x) v_m,
+(with residual_after_bottleneck: y = r . ( b + relu(W b) ),  b = W_dec W_enc h)
 
 with phi(x) = (x_1, ..., x_d, prod_i x_i) in {-1,+1}^{d+1} the d singleton modes plus the
 product mode, and V = [v_1 ... v_d, v_prod] the (d+1) x d_hid embedding. Everything is
@@ -84,6 +85,8 @@ class Rank1BottleneckNet(nn.Module):
         s = h @ self.W_enc.t()                                    # (batch, K) bottleneck code
         b = s @ self.W_dec.t()                                    # (batch, N)
         a = F.relu(self.linear(b))
+        if self.cfg.residual_after_bottleneck:
+            a = b + a
         y = self.readout(a).squeeze(1)
         if return_parts:
             return y, dict(h=h, code=s, bottleneck_out=b, hidden=a)
