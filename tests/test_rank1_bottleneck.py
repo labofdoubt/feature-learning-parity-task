@@ -51,6 +51,9 @@ def test_enc_init_cosine(mode, which):
     torch.manual_seed(3)
     r = Rank1BottleneckNet(Rank1Config(d=8, d_hid=256, enc_init="random"))
     assert abs(r.enc_cosine_to("product")) < 0.3
+    torch.manual_seed(3)
+    q = Rank1BottleneckNet(Rank1Config(d=8, d_hid=256, enc_init="random_no_product"))
+    assert abs(q.enc_cosine_to("product")) < 1e-6 and abs(q.bottleneck_coefficients()[8]) < 1e-6
 
 
 def test_init_variances_and_config_roundtrip(tmp_path):

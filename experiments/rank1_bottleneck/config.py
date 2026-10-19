@@ -21,9 +21,10 @@ class Rank1Config:
     #   "random"      N(0, bottleneck_variance) entries
     #   "linear_sum"  aligned with v_1 + ... + v_d (sum of the singleton embeddings)
     #   "product"     aligned with v_{x_1 ... x_d} (embedding of the product mode)
+    #   "random_no_product"  random draw with its component along v_prod projected out
     # with cosine `enc_cosine` to that direction (the rest is a random orthogonal component),
     # at the norm a random draw would have, sqrt(d_hid * bottleneck_variance).
-    enc_init: Literal["random", "linear_sum", "product"] = "random"
+    enc_init: Literal["random", "linear_sum", "product", "random_no_product"] = "random"
     enc_cosine: float = 1.0
     # ---- optimization (SGD with momentum, as in the main repo)
     lr: float = 1e-3
@@ -40,8 +41,8 @@ class Rank1Config:
     output_dir: str = "runs/rank1_example"
 
     def __post_init__(self) -> None:
-        if self.enc_init not in ("random", "linear_sum", "product"):
-            raise ValueError(f"enc_init must be random, linear_sum or product, got {self.enc_init!r}")
+        if self.enc_init not in ("random", "linear_sum", "product", "random_no_product"):
+            raise ValueError(f"enc_init must be random, linear_sum, product or random_no_product, got {self.enc_init!r}")
         if not -1.0 <= self.enc_cosine <= 1.0:
             raise ValueError("enc_cosine must be in [-1, 1]")
         if self.d < 1 or self.d_hid < 1:

@@ -44,6 +44,10 @@ class Rank1BottleneckNet(nn.Module):
         random = torch.randn(N)
         if cfg.enc_init == "random":
             return random * math.sqrt(cfg.bn_var)
+        if cfg.enc_init == "random_no_product":
+            vp = self.embedding[cfg.d]
+            u = vp / vp.norm().clamp_min(1e-12)
+            return (random - (random @ u) * u) * math.sqrt(cfg.bn_var)   # exactly orthogonal to v_prod
         target = self.embedding[: cfg.d].sum(0) if cfg.enc_init == "linear_sum" else self.embedding[cfg.d]
         u = target / target.norm().clamp_min(1e-12)
         perp = random - (random @ u) * u
