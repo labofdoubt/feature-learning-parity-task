@@ -110,3 +110,31 @@ Q ~ 5.7: Q <= 5.4 pure degree-4 route (share 1), Q >= 6.2 pure singleton route (
 through a slow takeover (at Q = 5.2 the share is 0.03 at 25k, 0.79 at 50k, 1.0 at 100k). MSE and full loss
 are nearly flat across the transition (5.0e-3 / 0.136 on the degree-4 side, 5.5e-3 / 0.14 at Q = 6) and
 then decrease slowly with Q on the singleton side (2.5e-3 / 0.098 at Q = 9).
+
+## Experiment 1: planting a degree-4 circuit into the trained singleton solution
+
+`plantd4_Q8_summary.png`, `plantd4_Q8_traj.png`, `plantd4_Q8_summary.csv`; driver
+`experiments/rank1_bottleneck/plant_degree4.py`, figures `plot_plant_degree4.py`, tests
+`tests/test_plant_degree4.py`. Source: `runs/rank1_d8_s44_nobn_wd1e-2_Q8.0_50k/checkpoints/final.pt`
+(sha256 41849d5c..., step 50000; singleton solution: MSE 5.0e-3, L 0.2023, degree-4 share 1e-7).
+Construction: M = 4 silent units J = [195, 404, 471, 872] (output RMS 1.4e-8), two directions U orthogonal
+to all embedding rows, prepared baseline W_base = W0 (I - U U^T) with rows J and readout entries J zeroed
+(predictions preserved to 8e-16, penalty change -1.3e-6), then V_p += rho/sqrt2 u1, V_q += rho/sqrt2 u2,
+W_J = rho/sqrt(2M) S U^T, r_J = rho/sqrt(M) s1 s2. Validated (float64 / float32): y_rho - y_base =
+rho^3/4 chi_8 to 1e-15 / 5e-7, no other Walsh coefficients, norm increase 3 rho^2, objective change
+-2(1-a_base) rho^3/4 + (rho^3/4)^2 + 3 lambda rho^2 / 2 to 1e-16 / 3e-12; projected regularized gradient
+onto the three templates = 2 e kappa_2 rho^2 - lambda rho to 1e-17. Every arm: fresh SGD (zero momentum
+buffers, momentum 0.9, lr 1e-3, wd 1e-2 on all three trained matrices, unused W_enc/W_dec excluded),
+batch 512, identical minibatch sequence (data seed 777; repeats 778/779), 50k post-intervention steps,
+exact full-cube diagnostics every 5 steps to 500, every 100 to 5k, then every 250. Run dirs
+`runs/plantd4_Q8_<arm>_s<seed>` (`analysis/`: intervention.json with all metadata + validation,
+trajectory.csv, final.json with the final singleton-only / degree-4-only ablations, templates.pt;
+`checkpoints/`: intervened.pt, final.pt) split across swish and the 85.10.218.46:35675 box; 150k-step
+continuations under `plantd4_Q8L_*`. Local copies of every `analysis/` folder in `analysis_output/plantd4_Q8/`.
+Result: finite seed barrier between rho = 0.28 (decay, 3 minibatch seeds) and 0.285 (rescue at 150k; 0.45
+share at 50k), prediction 0.2831; rescued arms reach L 0.0376-0.040 (prediction 0.03764), decayed arms
+0.2020 (prediction 0.20196). Along coherent trajectories b, w, r stay equal to 0.3% and a_planted = b w r / 4
+to < 1e-4 until the takeover (symmetric-circuit approximation holds); the barrier is a basin boundary
+(rho = 0.30 shrinks the rest first and grows only slowly for 20k steps). Target-orthogonal controls: decay at
+0.28 and 0.34 (planted units overtaken by singleton leakage), persistent mixed solution at 0.40 (share
+0.70, L 0.078 unchanged from 50k to 150k, planted coefficient 0.64 above the symmetric formula).

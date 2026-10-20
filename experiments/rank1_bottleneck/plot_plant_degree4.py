@@ -69,6 +69,12 @@ def summary_figure(df: pd.DataFrame, out: str, tag: str) -> None:
                 primary = r.seed == base_seed
                 ax.plot(r.rho + (0 if primary else 0.004 * (seeds.index(r.seed))), r[col], marker,
                         ms=9 if primary else 5, mfc=OUTCOME_COLOR[r.outcome], mec="k", mew=0.6, alpha=1 if primary else 0.8, zorder=3)
+        # arms continued under another tag: ring in the continuation's outcome color
+        for _, r in df[(df.tag != tag) & (df.seed == base_seed)].iterrows():
+            m = main[(main.arm == r.arm) & (main.seed == base_seed)]
+            if len(m):
+                ax.plot(r.rho, m[col].iloc[0], "o" if r.kind == "coherent" else "s", ms=15, mfc="none",
+                        mec=OUTCOME_COLOR[r.outcome], mew=2.2, zorder=4)
         ax.axvline(RHO_CRIT, color="k", ls="--", lw=1, zorder=1)
         ax.grid(alpha=0.25); ax.set_ylabel(ylab)
     axes[0].set_ylim(-0.04, 1.04)
@@ -83,6 +89,7 @@ def summary_figure(df: pd.DataFrame, out: str, tag: str) -> None:
                Line2D([], [], marker="o", ls="", ms=9, mfc=OUTCOME_COLOR["rescue"], mec="k", label="rescue: degree-4 solution"),
                Line2D([], [], marker="o", ls="", ms=9, mfc=OUTCOME_COLOR["mixed"], mec="k", label="mixed / unresolved"),
                Line2D([], [], marker="o", ls="", ms=9, mfc=OUTCOME_COLOR["decay"], mec="k", label="decay: singleton solution"),
+               Line2D([], [], marker="o", ls="", ms=13, mfc="none", mec="gray", mew=2.2, label="ring: outcome after a 150k-step continuation"),
                Line2D([], [], color="k", ls="--", lw=1, label=f"predicted barrier ρ_crit = {RHO_CRIT}"),
                Line2D([], [], color="#d62728", ls=":", lw=1.2, label=f"predicted singleton objective {L_SINGLE}"),
                Line2D([], [], color="#2ca02c", ls=":", lw=1.2, label=f"predicted degree-4 objective {L_D4}")]
