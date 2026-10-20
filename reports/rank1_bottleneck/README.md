@@ -67,3 +67,12 @@ final checkpoints gathered on swish); per-run figure/CSV `q_sweep_d8_s44noise_no
 Top: final test MSE, original vs noise; bottom: full loss, original vs noise. The noise network gives
 MSE 5.0e-3 and full loss 0.202 at every Q, identical to the original's singleton regime (Q >= 7.4), i.e.
 the singleton route is the only route and the degree-4 route (MSE 1.6e-4, full 0.038) is 31x / 5.3x better.
+
+`q_sweep_d8_s44_nobn_wd1e-2_noise1_compare.png`: the converse of the previous figure, for Q_1/Q_4 > 6
+only (6.2..9.0 step 0.2): the eight SINGLETON inputs are replaced by independent random +-1 bits
+(`noise_modes: [1]`) while the two degree-4 modes stay, same steps, evaluation and wd 1e-2. Runs
+`rank1_d8_s44noise1_nobn_wd1e-2_Q<q>_50k` (split across swish and the 85.10.218.46:35675 box, final
+checkpoints gathered on swish); per-run figure/CSV `q_sweep_d8_s44noise1_nobn_wd1e-2_50k_preact.*`. Top:
+final test MSE, original vs singletons-noised; bottom: full loss. With only the degree-4 modes available
+the network reaches MSE 1.6e-4 and full loss 0.038 at every Q, exactly the original's degree-4 regime,
+while the original sits on the mixed plateau (Q 6.2-7.2) or the singleton route (Q >= 7.4) there.
