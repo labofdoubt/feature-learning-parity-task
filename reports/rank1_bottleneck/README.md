@@ -138,3 +138,7 @@ to < 1e-4 until the takeover (symmetric-circuit approximation holds); the barrie
 (rho = 0.30 shrinks the rest first and grows only slowly for 20k steps). Target-orthogonal controls: decay at
 0.28 and 0.34 (planted units overtaken by singleton leakage), persistent mixed solution at 0.40 (share
 0.70, L 0.078 unchanged from 50k to 150k, planted coefficient 0.64 above the symmetric formula).
+Coarse grid added afterwards (rho = 0.05, 0.10, 0.20, 0.50, 0.60, 0.80, 1.0 and orthogonal 0.60, 1.0): every
+rho <= 0.28 decays, every rho >= 0.285 is rescued to the same L = 0.0377; orthogonal controls rescue at 0.60
+and 1.0 with other units carrying 0.25 of the target. `plantd4_Q8_summary_zoom.png` zooms on rho in [0.25,
+0.33]. Brief write-up: `reports/plantd4_rescue_report.pdf` (`.tex`, compiled with tectonic).

@@ -56,8 +56,11 @@ def load_arms(runs_root: Path, tags: list[str]):
     return pd.DataFrame(rows), trajs
 
 
-def summary_figure(df: pd.DataFrame, out: str, tag: str) -> None:
+def summary_figure(df: pd.DataFrame, out: str, tag: str, xlim: tuple | None = None, suffix: str = "_summary") -> None:
     main = df[df.tag == tag]
+    if xlim is not None:
+        main = main[(main.rho >= xlim[0]) & (main.rho <= xlim[1])]
+        df = df[(df.rho >= xlim[0]) & (df.rho <= xlim[1])]
     fig, axes = plt.subplots(2, 1, figsize=(8.5, 7.2), sharex=True)
     seeds = sorted(main.seed.unique())
     base_seed = seeds[0]
@@ -67,7 +70,7 @@ def summary_figure(df: pd.DataFrame, out: str, tag: str) -> None:
             sub = main[main.kind == kind]
             for _, r in sub.iterrows():
                 primary = r.seed == base_seed
-                ax.plot(r.rho + (0 if primary else 0.004 * (seeds.index(r.seed))), r[col], marker,
+                ax.plot(r.rho + (0 if primary else 0.0015 * (seeds.index(r.seed))), r[col], marker,
                         ms=9 if primary else 5, mfc=OUTCOME_COLOR[r.outcome], mec="k", mew=0.6, alpha=1 if primary else 0.8, zorder=3)
         # arms continued under another tag: ring in the continuation's outcome color
         for _, r in df[(df.tag != tag) & (df.seed == base_seed)].iterrows():
@@ -85,7 +88,7 @@ def summary_figure(df: pd.DataFrame, out: str, tag: str) -> None:
     from matplotlib.lines import Line2D
     handles = [Line2D([], [], marker="o", ls="", ms=9, mfc="w", mec="k", label="coherent seed (fill = outcome)"),
                Line2D([], [], marker="s", ls="", ms=9, mfc="w", mec="k", label="target-orthogonal control"),
-               Line2D([], [], marker="o", ls="", ms=5, mfc="w", mec="k", label=f"repeat with another minibatch seed (small, offset)"),
+               Line2D([], [], marker="o", ls="", ms=5, mfc="w", mec="k", label="repeat with another minibatch seed (small, slightly offset in ρ)"),
                Line2D([], [], marker="o", ls="", ms=9, mfc=OUTCOME_COLOR["rescue"], mec="k", label="rescue: degree-4 solution"),
                Line2D([], [], marker="o", ls="", ms=9, mfc=OUTCOME_COLOR["mixed"], mec="k", label="mixed / unresolved"),
                Line2D([], [], marker="o", ls="", ms=9, mfc=OUTCOME_COLOR["decay"], mec="k", label="decay: singleton solution"),
@@ -93,10 +96,12 @@ def summary_figure(df: pd.DataFrame, out: str, tag: str) -> None:
                Line2D([], [], color="k", ls="--", lw=1, label=f"predicted barrier ρ_crit = {RHO_CRIT}"),
                Line2D([], [], color="#d62728", ls=":", lw=1.2, label=f"predicted singleton objective {L_SINGLE}"),
                Line2D([], [], color="#2ca02c", ls=":", lw=1.2, label=f"predicted degree-4 objective {L_D4}")]
-    axes[1].legend(handles=handles, fontsize=8, loc="center left", bbox_to_anchor=(0.01, 0.52), framealpha=0.95)
+    axes[1].legend(handles=handles, fontsize=8, loc="center right", framealpha=0.95)
+    if xlim is not None:
+        axes[1].set_xlim(*xlim)
     steps = int(main.steps.max())
     fig.suptitle(f"Planted degree-4 circuit in the trained singleton solution: outcome after {steps//1000}k post-intervention steps", fontsize=11)
-    fig.tight_layout(); fig.savefig(f"{out}_summary.png", dpi=150)
+    fig.tight_layout(); fig.savefig(f"{out}{suffix}.png", dpi=150); fig.savefig(f"{out}{suffix}.pdf")
 
 
 def trajectory_figure(trajs: dict, df: pd.DataFrame, out: str, arms: list[str]) -> None:
@@ -132,7 +137,7 @@ def trajectory_figure(trajs: dict, df: pd.DataFrame, out: str, arms: list[str]) 
         ax.set_xlabel("post-intervention step  (×10³)"); ax.grid(alpha=0.25)
     axes[0].legend(fontsize=8, loc="center left")
     fig.suptitle("Trajectories below, near and above the barrier", fontsize=11)
-    fig.tight_layout(); fig.savefig(f"{out}_traj.png", dpi=150)
+    fig.tight_layout(); fig.savefig(f"{out}_traj.png", dpi=150); fig.savefig(f"{out}_traj.pdf")
 
 
 def main() -> None:
@@ -142,12 +147,15 @@ def main() -> None:
     ap.add_argument("--extra-tag", nargs="*", default=[], help="additional tags (e.g. longer continuations) to load for trajectories/table")
     ap.add_argument("--out", required=True)
     ap.add_argument("--traj-arms", nargs="*", default=["rho0.28", "rho0.29", "rho0.30", "orth0.40"])
+    ap.add_argument("--zoom", type=float, nargs=2, default=None, help="also write <out>_summary_zoom.png restricted to this rho range")
     args = ap.parse_args()
     df, trajs = load_arms(Path(args.runs_root), [args.tag] + list(args.extra_tag))
     df = df.sort_values(["tag", "kind", "rho", "seed"])
     df.to_csv(f"{args.out}_summary.csv", index=False)
     print(df.to_string(index=False, float_format=lambda v: f"{v:.4g}"))
     summary_figure(df, args.out, args.tag)
+    if args.zoom:
+        summary_figure(df, args.out, args.tag, xlim=tuple(args.zoom), suffix="_summary_zoom")
     trajectory_figure(trajs, df, args.out, args.traj_arms)
     print(f"{args.out}_summary.png", f"{args.out}_traj.png")
 
