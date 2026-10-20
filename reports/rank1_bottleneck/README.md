@@ -86,3 +86,12 @@ weight; sorted by target power. Q = 4: every active unit is a(p +- q) with p = x
 readout < 0. Q = 8: every active unit is a * sum_i s_i x_i with |s_i| = 1 (a sign pattern), 128/128
 patterns up to overall sign present, readout sign = -parity(s) for all 514 active units, degree-4
 coefficients < 2e-4 (a template construction of the parity). Script `neuron_decomposition.py`.
+
+`q_sweep_d8_s44_nobn_wd1e-2_frozenemb_50k_preact.png` / `.csv`: the d = 8 wd 1e-2 50k-step sweep with the
+EMBEDDING FROZEN at its Q-scaled init (`freeze_embedding: true`: not trained, not decayed, so the full
+loss covers only the linear layer and the readout). Runs `rank1_d8_s44_nobn_wd1e-2_frozenemb_Q<q>_50k`
+(split across swish and the 85.10.218.46:35675 box, final checkpoints gathered on swish). No regimes:
+the degree-4 share falls smoothly from 0.94 at Q = 3 to ~0 by Q = 5, and the share curves at 5k/10k/25k
+are still rising everywhere, i.e. the degree-4 route keeps taking over slowly. MSE and full loss are
+nearly flat (MSE 2.1e-4 -> 1.1e-4, full loss 0.029 -> 0.020 from Q = 3 to 9) and DEcrease with Q, because
+the frozen singleton rows supply input scale that costs no penalty.
