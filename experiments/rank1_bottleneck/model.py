@@ -36,7 +36,13 @@ class Rank1BottleneckNet(nn.Module):
         self.supports = cfg.mode_supports()
         self.n_modes = len(self.supports)
         self.product_idx = cfg.product_mode_index()
-        self.embedding = nn.Parameter(torch.randn(self.n_modes, N) * math.sqrt(cfg.emb_var))
+        if cfg.embedding_orthogonal:
+            if self.n_modes > N:
+                raise ValueError("embedding_orthogonal needs n_modes <= d_hid")
+            q, _ = torch.linalg.qr(torch.randn(N, self.n_modes))              # (N, M) orthonormal columns
+            self.embedding = nn.Parameter(q.t().contiguous() * math.sqrt(N * cfg.emb_var))
+        else:
+            self.embedding = nn.Parameter(torch.randn(self.n_modes, N) * math.sqrt(cfg.emb_var))
         if cfg.embedding_scale_by_degree:
             with torch.no_grad():
                 for i, m in enumerate(self.supports):

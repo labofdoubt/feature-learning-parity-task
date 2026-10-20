@@ -212,3 +212,19 @@ def test_freeze_embedding_excluded_from_training():
     x = torch.randint(0, 2, (64, 4)).float() * 2 - 1
     F.mse_loss(model(x), x.prod(1)).backward(); opt.step()
     assert torch.equal(model.embedding, emb0)
+
+
+def test_embedding_orthogonal_init():
+    import math
+    import torch
+    from experiments.rank1_bottleneck.config import Rank1Config
+    from experiments.rank1_bottleneck.model import Rank1BottleneckNet
+    modes = [[0], [1], [2], [3], [4], [5], [6], [7], [0, 1, 2, 3], [4, 5, 6, 7]]
+    cfg = Rank1Config(d=8, d_hid=256, input_modes=modes, use_bottleneck=False,
+                      embedding_orthogonal=True, embedding_scale_by_degree={1: 3.0})
+    torch.manual_seed(0)
+    E = Rank1BottleneckNet(cfg).embedding.detach()
+    G = E @ E.t()
+    assert torch.allclose(G - torch.diag(G.diag()), torch.zeros_like(G), atol=1e-5)   # rows orthogonal
+    assert torch.allclose(E[8:].norm(dim=1), torch.ones(2))                           # sqrt(256/256) = 1
+    assert torch.allclose(E[:8].norm(dim=1), 3.0 * torch.ones(8))                     # Q = 3 on singletons

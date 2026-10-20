@@ -26,6 +26,10 @@ class Rank1Config:
     noise_modes: bool | list = False
     # Keep the embedding at its (Q-scaled) init: not trained, not decayed.
     freeze_embedding: bool = False
+    # Initialize the embedding rows mutually orthogonal (QR of a Gaussian draw), each at the
+    # norm sqrt(d_hid * embedding_variance) a random row has in expectation; the degree scaling
+    # (Q) is applied afterwards as usual.
+    embedding_orthogonal: bool = False
     # Number of bottleneck directions K: code s = W_enc h in R^K, b = W_dec s.
     bottleneck_k: int = 1
     # False removes the bottleneck entirely: the ReLU layer reads h(x) directly.
