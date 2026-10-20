@@ -22,8 +22,11 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--title", default=None)
     ap.add_argument("--xlabel", default="Q_1 / Q_2 (singleton / second-row embedding norm at init)")
+    ap.add_argument("--qmin", type=float, default=None, help="restrict both sweeps to Q >= qmin")
     args = ap.parse_args()
     a = pd.read_csv(args.a).sort_values("Q"); b = pd.read_csv(args.b).sort_values("Q")
+    if args.qmin is not None:
+        a = a[a.Q >= args.qmin - 1e-9]; b = b[b.Q >= args.qmin - 1e-9]
     fig, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
     ax = axes[0]
     ax.semilogy(a.Q, a.test_mse, "o-", color="C3", label=args.label_a)

@@ -19,10 +19,11 @@ class Rank1Config:
     input_modes: str | list = "singletons+product"
     # Deprecated alias: False is the same as input_modes = "singletons".
     include_product_input: bool = True
-    # Replace every NON-singleton input mode by an independent uniform +-1 bit per sample (same
-    # embedding row, same init scale), so only the singleton modes carry information about the
-    # target. The Walsh bookkeeping keeps calling those rows by their mode names.
-    noise_modes: bool = False
+    # Replace input modes by independent uniform +-1 bits per sample (same embedding row, same
+    # init scale): True = every NON-singleton mode (only singletons carry information); a list of
+    # degrees, e.g. [1], = every mode of those degrees (so [1] leaves only the higher modes).
+    # The Walsh bookkeeping keeps calling the noised rows by their mode names.
+    noise_modes: bool | list = False
     # Number of bottleneck directions K: code s = W_enc h in R^K, b = W_dec s.
     bottleneck_k: int = 1
     # False removes the bottleneck entirely: the ReLU layer reads h(x) directly.
@@ -75,6 +76,15 @@ class Rank1Config:
         if self.bottleneck_k < 1:
             raise ValueError("bottleneck_k must be >= 1")
         self.mode_supports()  # validates
+
+    def noised_mode_indices(self) -> list[int]:
+        sup = self.mode_supports()
+        if self.noise_modes is True:
+            return [i for i, m in enumerate(sup) if len(m) != 1]
+        if self.noise_modes:
+            degs = {int(k) for k in self.noise_modes}
+            return [i for i, m in enumerate(sup) if len(m) in degs]
+        return []
 
     def readout_wd(self) -> float:
         return self.weight_decay if self.weight_decay_readout is None else self.weight_decay_readout

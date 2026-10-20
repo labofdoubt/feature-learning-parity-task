@@ -178,3 +178,19 @@ def test_noise_modes_replace_nonsingleton_features():
     assert not torch.equal(model.input_features(x)[:, 4:], f[:, 4:])   # fresh draw each call
     plain = Rank1BottleneckNet(Rank1Config(d=4, d_hid=8, input_modes="singletons+pairs", use_bottleneck=False))
     assert torch.equal(plain.input_features(x), g)
+
+
+def test_noise_modes_by_degree():
+    import torch
+    from experiments.rank1_bottleneck.config import Rank1Config
+    from experiments.rank1_bottleneck.model import Rank1BottleneckNet, features
+    modes = [[0], [1], [2], [3], [4], [5], [6], [7], [0, 1, 2, 3], [4, 5, 6, 7]]
+    cfg = Rank1Config(d=8, d_hid=8, input_modes=modes, use_bottleneck=False, noise_modes=[1])
+    assert cfg.noised_mode_indices() == list(range(8))
+    assert Rank1Config(d=8, d_hid=8, input_modes=modes, use_bottleneck=False, noise_modes=True).noised_mode_indices() == [8, 9]
+    model = Rank1BottleneckNet(cfg)
+    torch.manual_seed(0)
+    x = torch.randint(0, 2, (4096, 8)).float() * 2 - 1
+    f = model.input_features(x); g = features(x, model.supports)
+    assert torch.equal(f[:, 8:], g[:, 8:])                       # degree-4 modes untouched
+    assert (f[:, :8] * g[:, :8]).mean(0).abs().max() < 0.1       # singleton rows are noise

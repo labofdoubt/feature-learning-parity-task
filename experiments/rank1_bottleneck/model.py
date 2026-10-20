@@ -84,7 +84,7 @@ class Rank1BottleneckNet(nn.Module):
     def input_features(self, x: torch.Tensor) -> torch.Tensor:
         f = features(x, self.supports)
         if self.cfg.noise_modes:
-            nons = [i for i, m in enumerate(self.supports) if len(m) != 1]
+            nons = self.cfg.noised_mode_indices()
             if nons:
                 f = f.clone()
                 f[:, nons] = torch.randint(0, 2, (x.shape[0], len(nons)), device=x.device).float() * 2 - 1
