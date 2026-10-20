@@ -19,6 +19,10 @@ class Rank1Config:
     input_modes: str | list = "singletons+product"
     # Deprecated alias: False is the same as input_modes = "singletons".
     include_product_input: bool = True
+    # Replace every NON-singleton input mode by an independent uniform +-1 bit per sample (same
+    # embedding row, same init scale), so only the singleton modes carry information about the
+    # target. The Walsh bookkeeping keeps calling those rows by their mode names.
+    noise_modes: bool = False
     # Number of bottleneck directions K: code s = W_enc h in R^K, b = W_dec s.
     bottleneck_k: int = 1
     # False removes the bottleneck entirely: the ReLU layer reads h(x) directly.

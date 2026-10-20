@@ -32,7 +32,10 @@ def make_test_set(cfg: Rank1Config, device: torch.device) -> torch.Tensor:
     if cfg.d <= 16:
         keys = torch.arange(2 ** cfg.d, device=device)
         bits = torch.arange(cfg.d, device=device)
-        return (((keys.unsqueeze(1) >> bits) & 1).float() * 2 - 1)      # all 2^d inputs
+        cube = (((keys.unsqueeze(1) >> bits) & 1).float() * 2 - 1)      # all 2^d inputs
+        if cfg.noise_modes:                                              # repeat so the noise bits average out
+            cube = cube.repeat(max(1, cfg.test_samples // cube.shape[0]), 1)
+        return cube
     gen = torch.Generator(device=device); gen.manual_seed(cfg.seed + 1)
     return torch.randint(0, 2, (cfg.test_samples, cfg.d), device=device, generator=gen).float() * 2 - 1
 

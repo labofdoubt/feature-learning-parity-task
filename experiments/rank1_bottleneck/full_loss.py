@@ -45,6 +45,8 @@ def main() -> None:
         model = Rank1BottleneckNet(cfg)
         model.load_state_dict(ckpt["model_state"])
         x = torch.tensor(list(itertools.product([-1.0, 1.0], repeat=cfg.d)))
+    if cfg.noise_modes:
+        x = x.repeat(4096, 1)
         with torch.no_grad():
             mse = float(F.mse_loss(model(x), x.prod(1)))
             used = [model.embedding, model.linear.weight, model.readout.weight]

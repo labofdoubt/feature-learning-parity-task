@@ -81,8 +81,17 @@ class Rank1BottleneckNet(nn.Module):
         c = cfg.enc_cosine
         return norm * (c * u + math.sqrt(max(0.0, 1.0 - c * c)) * perp)
 
+    def input_features(self, x: torch.Tensor) -> torch.Tensor:
+        f = features(x, self.supports)
+        if self.cfg.noise_modes:
+            nons = [i for i, m in enumerate(self.supports) if len(m) != 1]
+            if nons:
+                f = f.clone()
+                f[:, nons] = torch.randint(0, 2, (x.shape[0], len(nons)), device=x.device).float() * 2 - 1
+        return f
+
     def embed(self, x: torch.Tensor) -> torch.Tensor:
-        return features(x, self.supports) @ self.embedding        # (batch, N)
+        return self.input_features(x) @ self.embedding        # (batch, N)
 
     def forward(self, x: torch.Tensor, *, return_parts: bool = False):
         h = self.embed(x)

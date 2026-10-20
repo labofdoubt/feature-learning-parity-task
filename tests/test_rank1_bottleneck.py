@@ -159,3 +159,22 @@ def test_readout_weight_decay_group():
                            dict(params=readout_params, weight_decay=cfg.readout_wd())], lr=1e-3)
     assert [g["weight_decay"] for g in opt.param_groups] == [0.1, 1e-3]
     assert sum(p.numel() for g in opt.param_groups for p in g["params"]) == sum(p.numel() for p in model.parameters())
+
+
+def test_noise_modes_replace_nonsingleton_features():
+    import torch
+    from experiments.rank1_bottleneck.config import Rank1Config
+    from experiments.rank1_bottleneck.model import Rank1BottleneckNet, features
+    cfg = Rank1Config(d=4, d_hid=8, input_modes="singletons+pairs", use_bottleneck=False, noise_modes=True)
+    model = Rank1BottleneckNet(cfg)
+    torch.manual_seed(0)
+    x = torch.randint(0, 2, (4096, 4)).float() * 2 - 1
+    f = model.input_features(x)
+    g = features(x, model.supports)
+    assert torch.equal(f[:, :4], g[:, :4])                       # singletons untouched
+    assert set(f[:, 4:].unique().tolist()) == {-1.0, 1.0}
+    corr = (f[:, 4] * g[:, 4]).mean().abs()                      # noise is independent of x1x2
+    assert corr < 0.1
+    assert not torch.equal(model.input_features(x)[:, 4:], f[:, 4:])   # fresh draw each call
+    plain = Rank1BottleneckNet(Rank1Config(d=4, d_hid=8, input_modes="singletons+pairs", use_bottleneck=False))
+    assert torch.equal(plain.input_features(x), g)
