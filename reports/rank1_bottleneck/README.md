@@ -95,3 +95,10 @@ the degree-4 share falls smoothly from 0.94 at Q = 3 to ~0 by Q = 5, and the sha
 are still rising everywhere, i.e. the degree-4 route keeps taking over slowly. MSE and full loss are
 nearly flat (MSE 2.1e-4 -> 1.1e-4, full loss 0.029 -> 0.020 from Q = 3 to 9) and DEcrease with Q, because
 the frozen singleton rows supply input scale that costs no penalty.
+
+`q_sweep_d8_s44_nobn_wd1e-2_frozenorth_50k_preact.png` / `.csv`: as the frozen-embedding sweep above but
+with the embedding rows initialized mutually ORTHOGONAL (`embedding_orthogonal: true`: QR of a Gaussian
+draw, each row at the random-draw norm 1, singleton rows then scaled by Q) and frozen. Runs
+`rank1_d8_s44_nobn_wd1e-2_frozenorth_Q<q>_50k` (split across swish and the 85.10.218.46:35675 box). The
+result is indistinguishable from the random frozen embedding: smooth decline of the degree-4 share
+(0.94 at Q = 3, ~0 by Q = 5), MSE 2.0e-4 -> 1.0e-4 and full loss 0.028 -> 0.020 from Q = 3 to 9.
