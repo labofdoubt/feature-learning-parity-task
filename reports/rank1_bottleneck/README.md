@@ -102,3 +102,11 @@ draw, each row at the random-draw norm 1, singleton rows then scaled by Q) and f
 `rank1_d8_s44_nobn_wd1e-2_frozenorth_Q<q>_50k` (split across swish and the 85.10.218.46:35675 box). The
 result is indistinguishable from the random frozen embedding: smooth decline of the degree-4 share
 (0.94 at Q = 3, ~0 by Q = 5), MSE 2.0e-4 -> 1.0e-4 and full loss 0.028 -> 0.020 from Q = 3 to 9.
+
+`q_sweep_d8_s44_nobn_wd5e-2_frozenorth_100k_preact.png` / `.csv`: the frozen-orthogonal-embedding sweep
+at wd 5e-2 and 100k steps (Q = 3..9 step 0.2; runs `rank1_d8_s44_nobn_wd5e-2_frozenorth_Q<q>_100k`, split
+across swish and the 85.10.218.46:35675 box). The heavier decay restores a sharp transition at
+Q ~ 5.7: Q <= 5.4 pure degree-4 route (share 1), Q >= 6.2 pure singleton route (share < 1e-3), reached
+through a slow takeover (at Q = 5.2 the share is 0.03 at 25k, 0.79 at 50k, 1.0 at 100k). MSE and full loss
+are nearly flat across the transition (5.0e-3 / 0.136 on the degree-4 side, 5.5e-3 / 0.14 at Q = 6) and
+then decrease slowly with Q on the singleton side (2.5e-3 / 0.098 at Q = 9).
