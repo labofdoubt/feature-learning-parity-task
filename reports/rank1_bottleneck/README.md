@@ -31,3 +31,8 @@ bottleneck) at wd 9e-2, 50000 steps, Q = Q_1/Q_4 from 3 to 9 step 0.2. Runs
 Q = 6.0-7.0 a stable mixed plateau (share 0.74: both degree-4 modes at power 1.14 each plus every singleton
 at 0.10, MSE 0.12, accuracy 1) reached by 5-10k steps and essentially frozen afterwards; Q >= 7.2 total
 collapse (all embedding power decays to 0, MSE 1). Plot: `plot_q_sweep.py --suffix _50k`.
+
+`full_loss_d8_s44_nobn_wd9e-2_50k.png` / `.csv`: for the same wd 9e-2 sweep, the final checkpoints' exact
+test MSE, the weight-decay term (wd/2) * sum ||theta||^2 over embedding, linear and readout, and their sum
+(the objective SGD descends). Made by `experiments/rank1_bottleneck/full_loss.py`. The three layers end
+with equal squared norms (weight-decay balancing of a homogeneous net).
