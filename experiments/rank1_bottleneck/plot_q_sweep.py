@@ -17,6 +17,28 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
+def full_loss(run_dir: Path) -> float:
+    """MSE on all 2^d inputs + (wd/2) * sum ||theta||^2 over the parameters the forward pass uses,
+    from checkpoints/final.pt (the objective SGD with weight_decay descends)."""
+    import itertools
+    import torch
+    import torch.nn.functional as F
+    from .config import Rank1Config
+    from .model import Rank1BottleneckNet
+    ckpt = torch.load(run_dir / "checkpoints" / "final.pt", map_location="cpu", weights_only=False)
+    cfg = Rank1Config(**ckpt["config"])
+    model = Rank1BottleneckNet(cfg)
+    model.load_state_dict(ckpt["model_state"])
+    x = torch.tensor(list(itertools.product([-1.0, 1.0], repeat=cfg.d)))
+    with torch.no_grad():
+        mse = float(F.mse_loss(model(x), x.prod(1)))
+        used = [model.embedding, model.linear.weight, model.readout.weight]
+        if cfg.use_bottleneck:
+            used += [model.W_enc, model.W_dec]
+        sq = sum(float((p ** 2).sum()) for p in used)
+    return mse + 0.5 * cfg.weight_decay * sq
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs-root", default="runs")
@@ -27,6 +49,7 @@ def main() -> None:
                     help="column to plot as the degree-2 share (e.g. preact/fraction_degree2)")
     ap.add_argument("--title", default=None)
     ap.add_argument("--suffix", default="", help="run-name suffix after the Q value, e.g. _50k")
+    ap.add_argument("--full-loss", action="store_true", help="also plot MSE + (wd/2) sum ||theta||^2 from final.pt")
     ap.add_argument("--xlabel", default="Q_1 / Q_2 (singleton / pair embedding norm at init)")
     args = ap.parse_args()
     rows = []
@@ -41,6 +64,8 @@ def main() -> None:
         for s in args.steps:
             sub = m[m.step == s]
             row[f"share2_{s}"] = float(sub[args.metric].iloc[0]) if len(sub) else float("nan")
+        if args.full_loss:
+            row["full_loss"] = full_loss(d)
         rows.append(row)
     df = pd.DataFrame(rows).sort_values("Q")
     df.to_csv(Path(args.out).with_suffix(".csv"), index=False)
@@ -51,7 +76,11 @@ def main() -> None:
         ax.plot(df.Q, df[f"share2_{s}"], ".--", alpha=0.6, label=f"step {s}")
     ax.set_ylabel(f"share ({args.metric})"); ax.set_ylim(-0.02, 1.02); ax.grid(alpha=0.3); ax.legend(fontsize=9)
     ax = axes[1]
-    ax.semilogy(df.Q, df.test_mse, "o-", color="C3"); ax.set_ylabel("final test MSE"); ax.set_xlabel(args.xlabel); ax.grid(alpha=0.3)
+    ax.semilogy(df.Q, df.test_mse, "o-", color="C3", label="final test MSE")
+    if args.full_loss:
+        ax.semilogy(df.Q, df.full_loss, "o-", color="k", label="full loss = MSE + (wd/2) sum ||theta||^2")
+        ax.legend(fontsize=9)
+    ax.set_ylabel("final value" if args.full_loss else "final test MSE"); ax.set_xlabel(args.xlabel); ax.grid(alpha=0.3)
     fig.suptitle(args.title or f"{args.prefix}: d4 target from x1..x4 + x1x2, x3x4", fontsize=10)
     fig.tight_layout(); fig.savefig(args.out, dpi=140); print(args.out)
     print(df.to_string(index=False, float_format=lambda v: f"{v:.3g}"))
