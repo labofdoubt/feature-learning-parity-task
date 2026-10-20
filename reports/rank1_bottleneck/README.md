@@ -24,3 +24,10 @@ Step count chosen from the probe `rank1_d8_sing_nobn_wd3e-2_probe` (singletons o
 singleton route reaches accuracy 1 by 1.5k steps and MSE 0.08 by 4k, floor ~0.056. NOTE: at 10k steps the
 degree-4 takeover is still in progress for Q = 5.5-7 (share rising at the last steps), so the "final" curve
 there is a snapshot, not an equilibrium.
+
+`q_sweep_d8_s44_nobn_wd9e-2_50k_preact.png` / `.csv`: same d = 8 setup (x1..x8 + x1x2x3x4, x5x6x7x8, no
+bottleneck) at wd 9e-2, 50000 steps, Q = Q_1/Q_4 from 3 to 9 step 0.2. Runs
+`rank1_d8_s44_nobn_wd9e-2_Q<q>_50k` on swish. Three regimes: Q <= 5.8 degree-4 route (share 1, MSE 0.014);
+Q = 6.0-7.0 a stable mixed plateau (share 0.74: both degree-4 modes at power 1.14 each plus every singleton
+at 0.10, MSE 0.12, accuracy 1) reached by 5-10k steps and essentially frozen afterwards; Q >= 7.2 total
+collapse (all embedding power decays to 0, MSE 1). Plot: `plot_q_sweep.py --suffix _50k`.

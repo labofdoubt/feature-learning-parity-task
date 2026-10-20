@@ -26,11 +26,12 @@ def main() -> None:
     ap.add_argument("--metric", default="bottleneck/fraction_degree2",
                     help="column to plot as the degree-2 share (e.g. preact/fraction_degree2)")
     ap.add_argument("--title", default=None)
+    ap.add_argument("--suffix", default="", help="run-name suffix after the Q value, e.g. _50k")
     ap.add_argument("--xlabel", default="Q_1 / Q_2 (singleton / pair embedding norm at init)")
     args = ap.parse_args()
     rows = []
-    for d in sorted(Path(args.runs_root).glob(f"{args.prefix}Q*")):
-        mt = re.search(r"Q([0-9.]+)$", d.name)
+    for d in sorted(Path(args.runs_root).glob(f"{args.prefix}Q*{args.suffix}")):
+        mt = re.search(r"Q([0-9.]+)" + re.escape(args.suffix) + "$", d.name)
         f = d / "metrics.csv"
         if not mt or not f.exists():
             continue
