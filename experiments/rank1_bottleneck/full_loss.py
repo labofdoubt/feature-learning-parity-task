@@ -51,7 +51,7 @@ def main() -> None:
             if cfg.use_bottleneck:
                 used += [model.W_enc, model.W_dec]
             sq = {n: float((p ** 2).sum()) for n, p in zip(["embedding", "linear", "readout", "W_enc", "W_dec"], used)}
-        penalty = 0.5 * cfg.weight_decay * sum(sq.values())
+        penalty = 0.5 * sum((cfg.readout_wd() if k == "readout" else cfg.weight_decay) * v for k, v in sq.items())
         rows.append(dict(Q=float(mt.group(1)), test_mse=mse, wd_penalty=penalty, full_loss=mse + penalty,
                          **{f"sumsq_{k}": v for k, v in sq.items()}))
     df = pd.DataFrame(rows).sort_values("Q")

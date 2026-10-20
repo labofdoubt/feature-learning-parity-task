@@ -142,3 +142,20 @@ def test_no_bottleneck_and_preact_coefficients():
 def test_test_set_enumerates_all_inputs():
     x = make_test_set(Rank1Config(d=5), torch.device("cpu"))
     assert x.shape == (32, 5) and torch.unique(x, dim=0).shape[0] == 32
+
+
+def test_readout_weight_decay_group():
+    from experiments.rank1_bottleneck.config import Rank1Config
+    cfg = Rank1Config(d=4, d_hid=16, input_modes="singletons+pairs", use_bottleneck=False,
+                      weight_decay=0.1, weight_decay_readout=1e-3)
+    assert cfg.readout_wd() == 1e-3
+    assert Rank1Config(d=4, d_hid=16, weight_decay=0.1).readout_wd() == 0.1
+    import torch
+    from experiments.rank1_bottleneck.model import Rank1BottleneckNet
+    model = Rank1BottleneckNet(cfg)
+    readout_params = list(model.readout.parameters())
+    other_params = [p for n, p in model.named_parameters() if not n.startswith("readout.")]
+    opt = torch.optim.SGD([dict(params=other_params, weight_decay=cfg.weight_decay),
+                           dict(params=readout_params, weight_decay=cfg.readout_wd())], lr=1e-3)
+    assert [g["weight_decay"] for g in opt.param_groups] == [0.1, 1e-3]
+    assert sum(p.numel() for g in opt.param_groups for p in g["params"]) == sum(p.numel() for p in model.parameters())

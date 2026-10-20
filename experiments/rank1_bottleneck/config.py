@@ -49,6 +49,9 @@ class Rank1Config:
     # ---- optimization (SGD with momentum, as in the main repo)
     lr: float = 1e-3
     weight_decay: float = 1e-3
+    # Weight decay for the readout only (None -> same as weight_decay); every other
+    # parameter keeps weight_decay.
+    weight_decay_readout: float | None = None
     momentum: float = 0.9
     num_steps: int = 100_000
     batch_size: int = 512
@@ -68,6 +71,9 @@ class Rank1Config:
         if self.bottleneck_k < 1:
             raise ValueError("bottleneck_k must be >= 1")
         self.mode_supports()  # validates
+
+    def readout_wd(self) -> float:
+        return self.weight_decay if self.weight_decay_readout is None else self.weight_decay_readout
 
     def mode_supports(self) -> list[tuple[int, ...]]:
         """The input modes as tuples of 0-based bit indices, in embedding-row order."""

@@ -32,11 +32,12 @@ def full_loss(run_dir: Path) -> float:
     x = torch.tensor(list(itertools.product([-1.0, 1.0], repeat=cfg.d)))
     with torch.no_grad():
         mse = float(F.mse_loss(model(x), x.prod(1)))
-        used = [model.embedding, model.linear.weight, model.readout.weight]
+        used = [model.embedding, model.linear.weight]
         if cfg.use_bottleneck:
             used += [model.W_enc, model.W_dec]
         sq = sum(float((p ** 2).sum()) for p in used)
-    return mse + 0.5 * cfg.weight_decay * sq
+        sq_ro = float((model.readout.weight ** 2).sum())
+    return mse + 0.5 * (cfg.weight_decay * sq + cfg.readout_wd() * sq_ro)
 
 
 def main() -> None:

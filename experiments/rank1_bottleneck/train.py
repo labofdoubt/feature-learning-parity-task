@@ -97,7 +97,11 @@ def train(cfg: Rank1Config, resume_from: str | Path | None = None) -> Path:
     (out_dir / "checkpoints").mkdir(exist_ok=True)
     save_config(cfg, out_dir / "config.yaml")
     model = Rank1BottleneckNet(cfg).to(device)
-    opt = torch.optim.SGD(model.parameters(), lr=cfg.lr, momentum=cfg.momentum, weight_decay=cfg.weight_decay)
+    readout_params = list(model.readout.parameters())
+    other_params = [p for n, p in model.named_parameters() if not n.startswith("readout.")]
+    opt = torch.optim.SGD([dict(params=other_params, weight_decay=cfg.weight_decay),
+                           dict(params=readout_params, weight_decay=cfg.readout_wd())],
+                          lr=cfg.lr, momentum=cfg.momentum)
     x_test = make_test_set(cfg, device)
     torch.save(dict(x=x_test.cpu()), out_dir / "test_data.pt")
     start = 0
