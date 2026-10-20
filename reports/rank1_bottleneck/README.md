@@ -58,3 +58,12 @@ test MSE of the original sweep and of the noise sweep; bottom: full loss (MSE + 
 from final.pt) for both. The noise network reproduces the original's singleton regime (MSE ~0.13, full
 loss ~1.75) at every Q, so with only singletons the pair route's values (MSE 0.017, full loss 1.28) are
 never reached. Made by `experiments/rank1_bottleneck/plot_q_compare.py`.
+
+`q_sweep_d8_s44_nobn_wd1e-2_noise_compare.png`: the d = 8 wd 1e-2 50k-step sweep repeated with the two
+degree-4 inputs x1x2x3x4, x5x6x7x8 replaced by independent random +-1 bits (`noise_modes: true`), same
+steps, evaluation (full cube, tiled so the noise averages) and 31 Q points. Runs
+`rank1_d8_s44noise_nobn_wd1e-2_Q<q>_50k` (even Q indices on swish, odd on the 85.10.218.46:35675 box,
+final checkpoints gathered on swish); per-run figure/CSV `q_sweep_d8_s44noise_nobn_wd1e-2_50k_preact.*`.
+Top: final test MSE, original vs noise; bottom: full loss, original vs noise. The noise network gives
+MSE 5.0e-3 and full loss 0.202 at every Q, identical to the original's singleton regime (Q >= 7.4), i.e.
+the singleton route is the only route and the degree-4 route (MSE 1.6e-4, full 0.038) is 31x / 5.3x better.
