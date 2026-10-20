@@ -34,7 +34,7 @@ def full_loss(run_dir: Path) -> float:
         x = x.repeat(4096, 1)
     with torch.no_grad():
         mse = float(F.mse_loss(model(x), x.prod(1)))
-        used = [model.embedding, model.linear.weight]
+        used = ([] if cfg.freeze_embedding else [model.embedding]) + [model.linear.weight]
         if cfg.use_bottleneck:
             used += [model.W_enc, model.W_dec]
         sq = sum(float((p ** 2).sum()) for p in used)

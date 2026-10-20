@@ -24,6 +24,8 @@ class Rank1Config:
     # degrees, e.g. [1], = every mode of those degrees (so [1] leaves only the higher modes).
     # The Walsh bookkeeping keeps calling the noised rows by their mode names.
     noise_modes: bool | list = False
+    # Keep the embedding at its (Q-scaled) init: not trained, not decayed.
+    freeze_embedding: bool = False
     # Number of bottleneck directions K: code s = W_enc h in R^K, b = W_dec s.
     bottleneck_k: int = 1
     # False removes the bottleneck entirely: the ReLU layer reads h(x) directly.

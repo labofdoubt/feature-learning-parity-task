@@ -50,6 +50,8 @@ class Rank1BottleneckNet(nn.Module):
         nn.init.normal_(self.readout.weight, std=math.sqrt(cfg.ro_var))
         with torch.no_grad():
             self.W_enc[0].copy_(self.initial_w_enc())            # alignment modes act on direction 0
+        if cfg.freeze_embedding:
+            self.embedding.requires_grad_(False)
 
     # the first encoder direction, kept under the old name for K = 1 code and analyses
     @property

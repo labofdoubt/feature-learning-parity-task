@@ -194,3 +194,21 @@ def test_noise_modes_by_degree():
     f = model.input_features(x); g = features(x, model.supports)
     assert torch.equal(f[:, 8:], g[:, 8:])                       # degree-4 modes untouched
     assert (f[:, :8] * g[:, :8]).mean(0).abs().max() < 0.1       # singleton rows are noise
+
+
+def test_freeze_embedding_excluded_from_training():
+    import torch
+    import torch.nn.functional as F
+    from experiments.rank1_bottleneck.config import Rank1Config
+    from experiments.rank1_bottleneck.model import Rank1BottleneckNet
+    cfg = Rank1Config(d=4, d_hid=16, input_modes="singletons+pairs", use_bottleneck=False,
+                      freeze_embedding=True, embedding_scale_by_degree={1: 3.0})
+    model = Rank1BottleneckNet(cfg)
+    assert not model.embedding.requires_grad
+    emb0 = model.embedding.detach().clone()
+    other = [p for n, p in model.named_parameters() if not n.startswith("readout.") and p.requires_grad]
+    assert all(p is not model.embedding for p in other) and len(other) == 3   # linear, W_enc, W_dec
+    opt = torch.optim.SGD(other + list(model.readout.parameters()), lr=0.1, weight_decay=0.5)
+    x = torch.randint(0, 2, (64, 4)).float() * 2 - 1
+    F.mse_loss(model(x), x.prod(1)).backward(); opt.step()
+    assert torch.equal(model.embedding, emb0)

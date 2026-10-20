@@ -101,7 +101,7 @@ def train(cfg: Rank1Config, resume_from: str | Path | None = None) -> Path:
     save_config(cfg, out_dir / "config.yaml")
     model = Rank1BottleneckNet(cfg).to(device)
     readout_params = list(model.readout.parameters())
-    other_params = [p for n, p in model.named_parameters() if not n.startswith("readout.")]
+    other_params = [p for n, p in model.named_parameters() if not n.startswith("readout.") and p.requires_grad]
     opt = torch.optim.SGD([dict(params=other_params, weight_decay=cfg.weight_decay),
                            dict(params=readout_params, weight_decay=cfg.readout_wd())],
                           lr=cfg.lr, momentum=cfg.momentum)
