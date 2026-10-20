@@ -15,3 +15,12 @@ Walsh power summed over hidden units (`preact/fraction_degree2`). Runs `rank1_d4
 r_j * <relu(z_j), x1x2x3x4> to the output target coefficient, exact over all 16 inputs), that signed
 contribution, the exact coefficients of the unit's pre-activation on x1, x2, x3, x4, x1x2, x3x4, and the
 readout weight. Sorted by target power. Made by `experiments/rank1_bottleneck/neuron_decomposition.py`.
+
+`q_sweep_d8_s44_nobn_wd3e-2_preact.png` / `.csv`: d = 8, inputs x1..x8 and the two degree-4 modes
+x1x2x3x4, x5x6x7x8, target x1...x8, NO bottleneck, wd 3e-2, d_hid 1024, SGD lr 1e-3, 10000 steps, seed 0;
+singleton embedding rows scaled by Q = Q_1/Q_4 from 3 to 9 step 0.5. Share = degree-4 fraction of the exact
+pre-activation Walsh power (`preact/fraction_degree4`). Runs `rank1_d8_s44_nobn_wd3e-2_Q<q>` on swish.
+Step count chosen from the probe `rank1_d8_sing_nobn_wd3e-2_probe` (singletons only, same wd): the
+singleton route reaches accuracy 1 by 1.5k steps and MSE 0.08 by 4k, floor ~0.056. NOTE: at 10k steps the
+degree-4 takeover is still in progress for Q = 5.5-7 (share rising at the last steps), so the "final" curve
+there is a snapshot, not an equilibrium.
