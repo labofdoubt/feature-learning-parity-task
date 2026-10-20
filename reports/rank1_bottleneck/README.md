@@ -76,3 +76,13 @@ checkpoints gathered on swish); per-run figure/CSV `q_sweep_d8_s44noise1_nobn_wd
 final test MSE, original vs singletons-noised; bottom: full loss. With only the degree-4 modes available
 the network reaches MSE 1.6e-4 and full loss 0.038 at every Q, exactly the original's degree-4 regime,
 while the original sits on the mixed plateau (Q 6.2-7.2) or the singleton route (Q >= 7.4) there.
+
+`neuron_decomp_d8_s44_nobn_wd1e-2_Q4.0_50k.csv`, `..._Q8.0_50k.csv`: per-neuron Walsh decomposition of
+the final models of the d = 8 wd 1e-2 sweep at Q_1/Q_4 = 4 (degree-4 regime) and 8 (singleton regime).
+Columns: neuron, target power ((r_j <relu(z_j), x1..x8>)^2, exact on all 256 inputs), the signed target
+contribution, the exact pre-activation coefficients on x1..x8, x1x2x3x4, x5x6x7x8, and the readout
+weight; sorted by target power. Q = 4: every active unit is a(p +- q) with p = x1x2x3x4, q = x5x6x7x8,
+|b/a| = 1 to 4 digits, singleton coefficients < 4e-5; p+q units all have readout > 0, p-q units all
+readout < 0. Q = 8: every active unit is a * sum_i s_i x_i with |s_i| = 1 (a sign pattern), 128/128
+patterns up to overall sign present, readout sign = -parity(s) for all 514 active units, degree-4
+coefficients < 2e-4 (a template construction of the parity). Script `neuron_decomposition.py`.
