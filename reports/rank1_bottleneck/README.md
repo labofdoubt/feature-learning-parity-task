@@ -48,3 +48,13 @@ the d = 4 no-bottleneck wd 0.1 sweep (`q_sweep_d4_nobn_wd1e-1_preact.png`) repea
 decay on the readout only (`weight_decay_readout`: 1e-2 resp. 1e-3; embedding and linear keep 0.1),
 2000 steps, Q = 1..5 step 0.1. Runs `rank1_d4_sp_nobn_wd1e-1_rowd{1e-2,1e-3}_Q<q>` on the box
 85.10.218.46:35675 (Drive prefix `runs_germany2`). Lower panel shows final test MSE and full loss.
+
+`q_sweep_d4_nobn_wd1e-1_noise_compare.png`: the d = 4 no-bottleneck wd 0.1 sweep repeated with the two
+pair inputs x1x2, x3x4 replaced by independent random +-1 bits (`noise_modes: true`; same embedding rows
+and init scale, so Q still scales the singleton rows relative to the noise rows). Runs
+`rank1_d4_spnoise_nobn_wd1e-1_Q<q>` on swish, 2000 steps, Q = 1..5 step 0.1; per-run figure/CSV
+`q_sweep_d4_spnoise_nobn_wd1e-1_preact.*` (its "degree-2 share" is the share of the noise rows). Top: final
+test MSE of the original sweep and of the noise sweep; bottom: full loss (MSE + (wd/2) sum ||theta||^2
+from final.pt) for both. The noise network reproduces the original's singleton regime (MSE ~0.13, full
+loss ~1.75) at every Q, so with only singletons the pair route's values (MSE 0.017, full loss 1.28) are
+never reached. Made by `experiments/rank1_bottleneck/plot_q_compare.py`.
