@@ -36,3 +36,15 @@ collapse (all embedding power decays to 0, MSE 1). Plot: `plot_q_sweep.py --suff
 test MSE, the weight-decay term (wd/2) * sum ||theta||^2 over embedding, linear and readout, and their sum
 (the objective SGD descends). Made by `experiments/rank1_bottleneck/full_loss.py`. The three layers end
 with equal squared norms (weight-decay balancing of a homogeneous net).
+
+`q_sweep_d8_s44_nobn_wd1e-2_50k_preact.png` / `.csv`: the wd 9e-2 d = 8 sweep repeated at wd 1e-2
+(50k steps, Q step 0.2; runs `rank1_d8_s44_nobn_wd1e-2_Q<q>_50k` on swish). Lower panel: final test MSE
+and full loss (MSE + (wd/2) sum ||theta||^2 from final.pt, `plot_q_sweep.py --full-loss`). Regimes:
+Q <= 5.8 degree-4 (MSE 1.6e-4, full 0.038); Q = 6.0-7.2 mixed plateau (share 0.70, MSE 1e-3, full 0.079);
+Q >= 7.4 singleton route survives at this wd (share 0, MSE 5e-3, full 0.20) instead of collapsing.
+
+`q_sweep_d4_nobn_wd1e-1_rowd1e-2_preact.png`, `q_sweep_d4_nobn_wd1e-1_rowd1e-3_preact.png` (+ `.csv`):
+the d = 4 no-bottleneck wd 0.1 sweep (`q_sweep_d4_nobn_wd1e-1_preact.png`) repeated with a SMALLER weight
+decay on the readout only (`weight_decay_readout`: 1e-2 resp. 1e-3; embedding and linear keep 0.1),
+2000 steps, Q = 1..5 step 0.1. Runs `rank1_d4_sp_nobn_wd1e-1_rowd{1e-2,1e-3}_Q<q>` on the box
+85.10.218.46:35675 (Drive prefix `runs_germany2`). Lower panel shows final test MSE and full loss.
