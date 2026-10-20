@@ -350,7 +350,7 @@ def train_arm(setup: Setup, arm: str, out_dir: Path, steps: int, data_seed: int,
         loss = F.mse_loss(model(x), x.prod(dim=1))
         opt.zero_grad(set_to_none=True); loss.backward(); opt.step()
         if eval_schedule(s) or s == steps:
-            snapshot(s, float(loss))
+            snapshot(s, loss.item())
             if s % 5000 == 0 or s == steps:
                 pd.DataFrame(hist).to_csv(out_dir / "analysis" / "trajectory.csv", index=False)
     pd.DataFrame(hist).to_csv(out_dir / "analysis" / "trajectory.csv", index=False)
