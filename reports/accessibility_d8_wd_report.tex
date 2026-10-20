@@ -46,7 +46,8 @@ partially locks in even when $4{+}4$ is norm-favored. Increasing $\lambda$ both 
 crossover and shifts it monotonically left onto $5/32$, saturating by
 $\lambda\approx10^{-2}$--$3{\cdot}10^{-2}$; the total stage-2 squared norm collapses
 $1057\to20$ at $Q_4/Q_1=0.167$ ($\lambda:0\to10^{-2}$) --- the minimum-norm mechanism seen in
-the $d4$ study, now selecting among three candidate routes.
+the $d4$ study, now selecting among three candidate routes. The final MSE itself
+(Fig.~\ref{fig:mse}) does not see the route change: it is set by $\lambda$ alone.
 
 \begin{figure}[h!]\centering
 \includegraphics[width=0.60\textwidth]{d8_phase_diagram.pdf}\vspace{-4pt}
@@ -57,6 +58,20 @@ $\times$ marks $d8$ failure ($|\hat f_8|<0.5$): at $\lambda=10^{-1}$ every condi
 $Q_4/Q_1\leq0.168$ fails while all conditions right of the boundary still solve the task
 through $4{+}4$.}
 \label{fig:phase}
+\end{figure}
+
+\begin{figure}[h!]\centering
+\includegraphics[width=0.60\textwidth]{d8_mse_phase_diagram.pdf}\vspace{-4pt}
+\caption{Same cells as Fig.~\ref{fig:phase}, colored by the mean final MSE of the $d8$ output
+over the full $2^8$ cube (log scale, 3 seeds; the full objective is this plus
+$\lambda\,\|\theta_2\|^2/2$, stored per cell as \texttt{wd\_penalty}). The MSE is set almost
+entirely by $\lambda$: each row sits near a floor that grows quadratically,
+$\mathrm{MSE}\approx40\lambda^2$ for $\lambda\geq10^{-3}$ (from $10^{-13}$ at $\lambda=0$
+to $0.4$ at $10^{-1}$), with only a mild decrease to the right (about $10\times$ across the
+ratio range at every $\lambda$). The
+$1^8\to4{+}4$ transition of Fig.~\ref{fig:phase} leaves no visible step in the MSE; $\times$
+marks the same failures.}
+\label{fig:mse}
 \end{figure}
 
 \textbf{3. There is a WD window where $4{+}4$ survives after $1^8$ dies.} At
